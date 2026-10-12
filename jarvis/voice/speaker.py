@@ -250,7 +250,7 @@ class SmoothSpeaker:
 
                 # Generate via isolated ThreadPoolExecutor to prevent unawaited coroutine warnings and loop collisions
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    audio_file = pool.submit(asyncio.run, self._generate_edge_speech(clean_text, v)).result(timeout=6.0)
+                    audio_file = pool.submit(asyncio.run, self._generate_edge_speech(clean_text, v)).result(timeout=2.5)
 
                 if audio_file and os.path.exists(audio_file):
                     return self._play_file_with_interrupt(audio_file, text=clean_text, prefix=prefix, live_print=live_print)
