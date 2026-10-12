@@ -67,6 +67,12 @@ class GDriveSync:
                 print(f"\033[1;32m[☁️ Google Drive Sync]: Restored latest memory.db from {drive_db}!\033[0m")
                 return True
 
+        drive_dna = target_dir / "voice_genetic_code.json"
+        local_dna = PROJECT_ROOT / "data" / "voice_genetic_code.json"
+        if drive_dna.exists() and not local_dna.exists():
+            shutil.copy2(drive_dna, local_dna)
+            print(f"\033[1;32m[☁️ Google Drive Sync]: Restored voice genetic code from Google Drive!\033[0m")
+
         if drive_json.exists():
             print(f"\033[1;32m[☁️ Google Drive Sync]: Found backup JSON in Google Drive: {drive_json}\033[0m")
             return True
@@ -88,6 +94,11 @@ class GDriveSync:
         dest_db = target_dir / "memory.db"
         if DB_PATH.exists():
             shutil.copy2(DB_PATH, dest_db)
+
+        # 3. Copy voice genetic code profile
+        dna_file = PROJECT_ROOT / "data" / "voice_genetic_code.json"
+        if dna_file.exists():
+            shutil.copy2(dna_file, target_dir / "voice_genetic_code.json")
 
         # 3. Optional: Direct Cloud Google Drive API sync if OAuth token is provided
         access_token = os.getenv("GDRIVE_ACCESS_TOKEN", "").strip()

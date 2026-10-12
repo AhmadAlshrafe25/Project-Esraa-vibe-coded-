@@ -35,16 +35,23 @@ class NativeSpeechRecognizer:
 
         # Initialize ultra-fast offline Vosk model (<5ms streaming decoding)
         self.vosk_model = None
+        self.spk_model = None
+        self.last_spk_vector = []
         try:
             import vosk
             vosk.SetLogLevel(-1)
             vosk_path = Path.home() / ".cache" / "vosk" / "vosk-model-small-en-us-0.15"
+            spk_path = Path.home() / ".cache" / "vosk" / "vosk-model-spk-0.4"
             if vosk_path.exists():
                 self.vosk_model = vosk.Model(str(vosk_path))
             else:
                 self.vosk_model = vosk.Model(lang="en-us")
+
+            if spk_path.exists():
+                self.spk_model = vosk.SpkModel(str(spk_path))
         except Exception:
             self.vosk_model = None
+            self.spk_model = None
 
     def _ensure_mic_volume(self):
         """Sets microphone to balanced 60% capture volume so speech is clear without clipping or excessive background hiss."""
@@ -100,7 +107,10 @@ class NativeSpeechRecognizer:
         if self.vosk_model:
             try:
                 import vosk
-                vosk_rec = vosk.KaldiRecognizer(self.vosk_model, self.sample_rate)
+                if self.spk_model:
+                    vosk_rec = vosk.KaldiRecognizer(self.vosk_model, self.sample_rate, self.spk_model)
+                else:
+                    vosk_rec = vosk.KaldiRecognizer(self.vosk_model, self.sample_rate)
             except Exception:
                 vosk_rec = None
 
@@ -195,22 +205,41 @@ class NativeSpeechRecognizer:
         if not recorded_frames or not is_speaking or speech_chunks_count < 4:
             return ""
 
-        # Extract near-instant in-memory streaming transcription from Vosk (<5ms)
+        # Extract near-instant in-memory streaming transcription & speaker vector from Vosk (<5ms)
+        recognized_text = ""
+        spk_vector = []
         if vosk_rec:
             try:
                 final_res = json.loads(vosk_rec.FinalResult())
                 recognized_text = final_res.get("text", "").strip()
-                if recognized_text:
-                    self.last_streaming_transcription = recognized_text
+                spk_vector = final_res.get("spk", [])
+                self.last_spk_vector = spk_vector
             except Exception:
                 pass
+
+        # Biomarker / Voice Genetic Gate check:
+        # Rejects random background voices, family/room chatter, and TV!
+        from jarvis.voice.biometrics import voice_dna
+        pcm_bytes = b"".join(recorded_frames)
+        if voice_dna.is_enrolled() and spk_vector and len(spk_vector) >= 10:
+            is_verified, score, reason = voice_dna.verify(spk_vector, pcm_data=pcm_bytes)
+            if not is_verified:
+                print(f"\r\033[1;31m[🛡️ Voice Gate: Ignored background speaker (Genetic match: {score:.1%}, required: {voice_dna.get_threshold():.0%})]\033[0m   \n")
+                self.last_streaming_transcription = ""
+                self.last_spk_vector = []
+                return ""
+            else:
+                print(f"\r\033[1;32m[🧬 Voice Genetic Match: {score:.1%} | Verified {voice_dna.get_user_name()}]\033[0m   ")
+
+        if recognized_text:
+            self.last_streaming_transcription = recognized_text
 
         # Write clean WAV file for verification/fallback
         with wave.open(str(wav_file), "wb") as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)
             wf.setframerate(self.sample_rate)
-            wf.writeframes(b"".join(recorded_frames))
+            wf.writeframes(pcm_bytes)
 
         return str(wav_file)
 
@@ -230,8 +259,12 @@ class NativeSpeechRecognizer:
         if not transcription and self.vosk_model and audio_path and os.path.exists(audio_path):
             try:
                 import vosk
+                from jarvis.voice.biometrics import voice_dna
                 with wave.open(audio_path, "rb") as wf:
-                    rec = vosk.KaldiRecognizer(self.vosk_model, wf.getframerate())
+                    if self.spk_model:
+                        rec = vosk.KaldiRecognizer(self.vosk_model, wf.getframerate(), self.spk_model)
+                    else:
+                        rec = vosk.KaldiRecognizer(self.vosk_model, wf.getframerate())
                     while True:
                         data = wf.readframes(4000)
                         if not data:
@@ -239,6 +272,12 @@ class NativeSpeechRecognizer:
                         rec.AcceptWaveform(data)
                     file_res = json.loads(rec.FinalResult())
                     text = file_res.get("text", "").strip()
+                    spk = file_res.get("spk", [])
+                    if voice_dna.is_enrolled() and spk and len(spk) >= 10:
+                        is_ok, score, _ = voice_dna.verify(spk)
+                        if not is_ok:
+                            print(f"\r\033[1;31m[🛡️ Voice Gate: Ignored background speaker (match: {score:.1%})]\033[0m\n")
+                            return ""
                     if text:
                         transcription = text
             except Exception:

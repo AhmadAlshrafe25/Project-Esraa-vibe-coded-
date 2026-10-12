@@ -15,14 +15,17 @@ BANNER = """\033[1;36m
   ╚═══════════════════════════════════════════════════════════════╝\033[0m"""
 
 def print_banner():
+    from jarvis.voice.biometrics import voice_dna
     voice_status = "\033[1;31mMuted (Silent Mode)\033[0m" if voice_speaker.is_muted else "\033[1;32mActive (Silky Neural)\033[0m"
+    gate_status = f"\033[1;32m🧬 Genetic Code Locked ({voice_dna.get_user_name()})\033[0m" if voice_dna.is_enrolled() else "\033[1;33m⚠️ Uncalibrated (Type /enroll)\033[0m"
     print(BANNER)
     print("\033[1;32m[+] Engine:\033[0m Gemini 3.5 Flash (Vision & Real-Time APIs)")
     print(f"\033[1;32m[+] Voice:\033[0m {voice_status}")
+    print(f"\033[1;32m[+] Voice Gate:\033[0m {gate_status}")
     print("\033[1;32m[+] Memory:\033[0m Google Drive Two-Way Synchronizer Active")
     print("\033[1;33m[!] Press ENTER once to activate Hands-Free Conversation!\033[0m")
     print("\033[1;33m[!] Barge-In Enabled: Speak or tap ENTER/SPACE to cut Ezra off at any time!\033[0m")
-    print("\033[1;33m[!] Commands: Type directly, or use /mute, /unmute, or speak 'be quiet' / 'talk to me'.\033[0m")
+    print("\033[1;33m[!] Commands: /enroll (calibrate voice), /voicegate, /threshold <num>, /mute, /unmute.\033[0m")
     print("-" * 65 + "\n")
 
 async def handle_turn(text: str) -> dict:
@@ -52,6 +55,35 @@ async def handle_turn(text: str) -> dict:
     prefix = "\033[1;35m[Ezra (Silent)]:\033[0m " if voice_speaker.is_muted else "\033[1;36m[Ezra]:\033[0m "
     completed = voice_speaker.speak(reply_speech, prefix=prefix, live_print=True)
     return {"should_continue": True, "was_interrupted": not completed}
+
+def run_voice_enrollment():
+    """Interactive Voice Genetic Code Calibration."""
+    from jarvis.voice.biometrics import voice_dna
+    print("\n\033[1;36m╔═══════════════════════════════════════════════════════════════╗")
+    print("║            🧬 EZRA VOCAL GENETIC CALIBRATION MODULE          ║")
+    print("╚═══════════════════════════════════════════════════════════════╝\033[0m")
+    print("\033[1;33m[!] When prompted, speak naturally for 3-5 seconds.\033[0m")
+    print("\033[1;33m[!] Example: 'Ezra, calibrate my vocal biometrics as my genetic code.'\033[0m\n")
+    
+    voice_speaker.speak("Please speak clearly for a few seconds so I can sequence and lock into your unique voice genetic code, sir.")
+    print("\033[1;32m[🎙️ Ready — Speak now!]\033[0m")
+    
+    audio_file = stt_engine.record_until_finished(max_wait_sec=10.0, silence_threshold_sec=1.2)
+    if not audio_file or not stt_engine.last_spk_vector:
+        print("\033[1;31m[-] Calibration incomplete: No vocal profile captured. Please speak a little louder.\033[0m\n")
+        return
+
+    try:
+        import wave
+        with wave.open(audio_file, "rb") as wf:
+            pcm = wf.readframes(wf.getnframes())
+        
+        voice_dna.enroll(stt_engine.last_spk_vector, pcm_data=pcm, user_name="Beat")
+        msg = f"Voice genetic code successfully locked in! Vocal profile calibrated. I will now strictly ignore all other voices around you."
+        print(f"\n\033[1;32m[+] SUCCESS: Genetic profile locked for {voice_dna.get_user_name()} (F0: {voice_dna.f0_mean:.1f}Hz, Threshold: {voice_dna.get_threshold():.0%})\033[0m\n")
+        voice_speaker.speak(msg)
+    except Exception as e:
+        print(f"\033[1;31m[-] Calibration error: {e}\033[0m\n")
 
 def continuous_conversation_loop():
     """Continuous conversation loop: dynamically listens until you finish speaking, replies, and immediately resumes listening!"""
@@ -124,6 +156,32 @@ def main():
                 voice_speaker.set_muted(False)
                 print("\033[1;32m[Ezra Voice: Active (Silky Neural Voice Enabled)]\033[0m\n")
                 voice_speaker.speak("Voice restored, sir.")
+                continue
+
+            if user_choice.lower() in ("/enroll", "/calibrate", "/voiceprint"):
+                run_voice_enrollment()
+                continue
+
+            if user_choice.lower().startswith("/threshold"):
+                parts = user_choice.split()
+                if len(parts) > 1:
+                    try:
+                        from jarvis.voice.biometrics import voice_dna
+                        new_t = float(parts[1])
+                        voice_dna.set_threshold(new_t)
+                        print(f"\033[1;32m[Voice Genetic Gate threshold set to {voice_dna.get_threshold():.0%}]\033[0m\n")
+                    except ValueError:
+                        print("Usage: /threshold 0.58\n")
+                else:
+                    from jarvis.voice.biometrics import voice_dna
+                    print(f"[Current Voice Genetic Gate threshold: {voice_dna.get_threshold():.0%}]\n")
+                continue
+
+            if user_choice.lower() in ("/voicegate", "/strict"):
+                from jarvis.voice.biometrics import voice_dna
+                state = voice_dna.toggle_strict_mode()
+                status_str = "\033[1;32mStrict (Exclusively listens to your voice)\033[0m" if state else "\033[1;33mOpen (Listens to all speakers)\033[0m"
+                print(f"[Voice Genetic Gate: {status_str}]\n")
                 continue
 
             if user_choice.lower() == "/voice":
