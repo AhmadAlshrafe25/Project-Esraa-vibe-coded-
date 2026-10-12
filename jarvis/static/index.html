@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PROJECT ESRAA // JARVIS INTERFACE</title>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;900&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #00f3ff;
+      --primary-glow: rgba(0, 243, 255, 0.4);
+      --secondary: #ff0077;
+      --secondary-glow: rgba(255, 0, 119, 0.4);
+      --bg-dark: #050b14;
+      --panel-bg: rgba(10, 25, 45, 0.75);
+      --panel-border: rgba(0, 243, 255, 0.25);
+      --text: #e0f4ff;
+      --text-dim: #7da5c3;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text);
+      font-family: 'Rajdhani', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+      background-image: 
+        radial-gradient(circle at 50% 50%, rgba(0, 50, 100, 0.2) 0%, transparent 80%),
+        linear-gradient(rgba(0, 243, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 243, 255, 0.03) 1px, transparent 1px);
+      background-size: 100% 100%, 40px 40px, 40px 40px;
+    }
+
+    /* Top HUD Bar */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 18px 36px;
+      border-bottom: 1px solid var(--panel-border);
+      background: rgba(5, 12, 24, 0.85);
+      backdrop-filter: blur(10px);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+
+    .logo-ring {
+      width: 40px;
+      height: 40px;
+      border: 2px dashed var(--primary);
+      border-radius: 50%;
+      animation: rotate 12s linear infinite;
+      box-shadow: 0 0 15px var(--primary-glow);
+    }
+
+    @keyframes rotate {
+      100% { transform: rotate(360deg); }
+    }
+
+    .brand h1 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 20px;
+      letter-spacing: 3px;
+      color: #fff;
+      text-shadow: 0 0 10px var(--primary);
+    }
+
+    .brand span {
+      font-size: 11px;
+      color: var(--secondary);
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
+    .hud-stats {
+      display: flex;
+      gap: 30px;
+      font-size: 13px;
+      letter-spacing: 1px;
+    }
+
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+    }
+
+    .stat-label {
+      color: var(--text-dim);
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+
+    .stat-val {
+      color: var(--primary);
+      font-weight: 700;
+      font-family: 'Orbitron', monospace;
+    }
+
+    /* Main Grid */
+    .container {
+      display: grid;
+      grid-template-columns: 320px 1fr 340px;
+      gap: 25px;
+      padding: 30px 36px;
+      height: calc(100vh - 80px);
+    }
+
+    .panel {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      backdrop-filter: blur(15px);
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .panel::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--primary), transparent);
+    }
+
+    .panel-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(0, 243, 255, 0.15);
+      font-family: 'Orbitron', sans-serif;
+      font-size: 13px;
+      letter-spacing: 2px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--primary);
+      text-transform: uppercase;
+    }
+
+    /* Left Panel: Tools & Quick Actions */
+    .actions-grid {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow-y: auto;
+    }
+
+    .hud-btn {
+      background: rgba(0, 243, 255, 0.05);
+      border: 1px solid rgba(0, 243, 255, 0.3);
+      color: var(--text);
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: all 0.2s ease;
+    }
+
+    .hud-btn:hover {
+      background: rgba(0, 243, 255, 0.15);
+      border-color: var(--primary);
+      box-shadow: 0 0 15px var(--primary-glow);
+      transform: translateX(4px);
+    }
+
+    .hud-btn:active {
+      transform: scale(0.98);
+    }
+
+    /* Center Panel: ARC Reactor & Dialogue */
+    .center-panel {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .visualizer-area {
+      height: 240px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    /* Arc Reactor Glow Pulse */
+    .arc-reactor {
+      width: 140px;
+      height: 140px;
+      border-radius: 50%;
+      border: 3px solid var(--primary);
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 35px var(--primary-glow), inset 0 0 25px var(--primary-glow);
+      transition: all 0.3s ease;
+    }
+
+    .arc-reactor.active {
+      border-color: var(--secondary);
+      box-shadow: 0 0 50px var(--secondary-glow), inset 0 0 35px var(--secondary-glow);
+      animation: pulse 1s infinite alternate;
+    }
+
+    .arc-inner-ring {
+      width: 100px;
+      height: 100px;
+      border: 2px dashed rgba(255, 255, 255, 0.7);
+      border-radius: 50%;
+      animation: rotate 8s linear infinite reverse;
+    }
+
+    .arc-core {
+      width: 50px;
+      height: 50px;
+      background: #fff;
+      border-radius: 50%;
+      box-shadow: 0 0 25px #fff, 0 0 50px var(--primary);
+      position: absolute;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(1); }
+      100% { transform: scale(1.08); }
+    }
+
+    .voice-status-text {
+      margin-top: 15px;
+      font-family: 'Orbitron', monospace;
+      font-size: 13px;
+      letter-spacing: 2px;
+      color: var(--primary);
+      text-transform: uppercase;
+    }
+
+    .chat-history {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      border-top: 1px solid rgba(0, 243, 255, 0.1);
+      border-bottom: 1px solid rgba(0, 243, 255, 0.1);
+    }
+
+    .chat-msg {
+      padding: 14px 18px;
+      border-radius: 10px;
+      max-width: 80%;
+      font-size: 16px;
+      line-height: 1.5;
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .chat-msg.user {
+      align-self: flex-end;
+      background: rgba(0, 243, 255, 0.12);
+      border: 1px solid rgba(0, 243, 255, 0.4);
+      color: #fff;
+    }
+
+    .chat-msg.esraa {
+      align-self: flex-start;
+      background: rgba(255, 0, 119, 0.1);
+      border: 1px solid rgba(255, 0, 119, 0.35);
+      color: #f7e6f0;
+    }
+
+    .tool-badge {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 4px 10px;
+      background: rgba(0, 243, 255, 0.15);
+      border-radius: 4px;
+      font-family: 'Orbitron', monospace;
+      font-size: 11px;
+      color: var(--primary);
+    }
+
+    .input-bar {
+      padding: 18px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .input-bar input {
+      flex: 1;
+      background: rgba(0, 15, 30, 0.6);
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      color: #fff;
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 16px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .input-bar input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 10px var(--primary-glow);
+    }
+
+    .mic-btn {
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      background: rgba(255, 0, 119, 0.15);
+      border: 1px solid var(--secondary);
+      color: var(--secondary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      transition: all 0.2s ease;
+    }
+
+    .mic-btn.recording {
+      background: var(--secondary);
+      color: #fff;
+      box-shadow: 0 0 25px var(--secondary-glow);
+      animation: pulse 0.8s infinite alternate;
+    }
+
+    /* Right Panel: Settings & Diagnostics */
+    .config-area {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      overflow-y: auto;
+    }
+
+    .config-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .config-field label {
+      font-size: 12px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .config-field input, .config-field select {
+      background: rgba(0, 15, 30, 0.6);
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      padding: 10px 14px;
+      color: #fff;
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 14px;
+      outline: none;
+    }
+
+    .save-btn {
+      margin-top: 10px;
+      background: linear-gradient(90deg, var(--primary), #0077ff);
+      color: #000;
+      font-weight: 700;
+      border: none;
+      padding: 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: 'Orbitron', sans-serif;
+      letter-spacing: 2px;
+      transition: opacity 0.2s;
+    }
+
+    .save-btn:hover {
+      opacity: 0.9;
+      box-shadow: 0 0 15px var(--primary-glow);
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <div class="logo-ring"></div>
+      <div>
+        <h1>PROJECT ESRAA</h1>
+        <span>Autonomous Neural Assistant</span>
+      </div>
+    </div>
+    <div class="hud-stats">
+      <div class="stat-item">
+        <span class="stat-label">CPU LOAD</span>
+        <span class="stat-val" id="hud-cpu">--%</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">MEMORY</span>
+        <span class="stat-val" id="hud-ram">-- GB</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">VOICE ENGINE</span>
+        <span class="stat-val" style="color: var(--secondary)">SONIA (BRITISH)</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="container">
+    <!-- Left: Actions & Automation -->
+    <div class="panel">
+      <div class="panel-header">
+        <span>Desktop Directives</span>
+        <span>[01]</span>
+      </div>
+      <div class="actions-grid">
+        <button class="hud-btn" onclick="quickAction('play_movie')">
+          <span>🎬 Open Movies / Streaming</span>
+          <span>&gt;</span>
+        </button>
+        <button class="hud-btn" onclick="quickAction('open_youtube')">
+          <span>📺 Launch YouTube</span>
+          <span>&gt;</span>
+        </button>
+        <button class="hud-btn" onclick="quickAction('open_tab')">
+          <span>🌐 New Web Browser Tab</span>
+          <span>&gt;</span>
+        </button>
+        <button class="hud-btn" onclick="quickAction('launch_app', 'calculator')">
+          <span>🧮 Calculator</span>
+          <span>&gt;</span>
+        </button>
+        <button class="hud-btn" onclick="quickAction('launch_app', 'terminal')">
+          <span>💻 System Terminal</span>
+          <span>&gt;</span>
+        </button>
+        <button class="hud-btn" onclick="quickAction('system_status')">
+          <span>⚡ System Diagnostics</span>
+          <span>&gt;</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Center: Voice & Interactive Dialogue -->
+    <div class="panel center-panel">
+      <div class="visualizer-area">
+        <div class="arc-reactor" id="reactor">
+          <div class="arc-inner-ring"></div>
+          <div class="arc-core"></div>
+        </div>
+        <div class="voice-status-text" id="voice-status">Awaiting Directive</div>
+      </div>
+
+      <div class="chat-history" id="chat-history">
+        <div class="chat-msg esraa">
+          Good day, sir. Project Esraa initialized and all systems are primed. What can I do for you today?
+        </div>
+      </div>
+
+      <div class="input-bar">
+        <button class="mic-btn" id="mic-btn" onclick="toggleSpeechRecognition()" title="Hold or Click to Speak">🎙</button>
+        <input type="text" id="user-input" placeholder="Give Project Esraa a command or ask a question..." onkeydown="if(event.key==='Enter') sendMessage()">
+        <button class="hud-btn" style="border-radius: 8px;" onclick="sendMessage()">EXECUTE</button>
+      </div>
+    </div>
+
+    <!-- Right: Configuration & Intelligence -->
+    <div class="panel">
+      <div class="panel-header">
+        <span>Neural Config</span>
+        <span>[02]</span>
+      </div>
+      <div class="config-area">
+        <div class="config-field">
+          <label>Google Gemini API Key (100% Free)</label>
+          <input type="password" id="cfg-gemini" placeholder="AIzaSy...">
+          <small style="color: var(--text-dim); font-size: 11px;">Get for free from aistudio.google.com</small>
+        </div>
+
+        <div class="config-field">
+          <label>Groq API Key (Fast & Free Tier)</label>
+          <input type="password" id="cfg-groq" placeholder="gsk_...">
+        </div>
+
+        <div class="config-field">
+          <label>Voice Persona</label>
+          <select id="cfg-voice">
+            <option value="en-GB-SoniaNeural">British Female (Sonia - JARVIS style)</option>
+            <option value="en-US-AriaNeural">American Female (Aria)</option>
+            <option value="en-US-JennyNeural">Conversational Female (Jenny)</option>
+            <option value="ar-EG-SalmaNeural">Arabic Female (Salma)</option>
+          </select>
+        </div>
+
+        <button class="save-btn" onclick="saveConfiguration()">UPDATE CREDENTIALS</button>
+        <div id="save-feedback" style="font-size: 12px; color: var(--primary); text-align: center;"></div>
+      </div>
+    </div>
+  </div>
+
+  <audio id="audio-player"></audio>
+
+  <script>
+    const chatHistory = document.getElementById('chat-history');
+    const userInput = document.getElementById('user-input');
+    const reactor = document.getElementById('reactor');
+    const voiceStatus = document.getElementById('voice-status');
+    const audioPlayer = document.getElementById('audio-player');
+    const micBtn = document.getElementById('mic-btn');
+
+    // Speech recognition setup (browser native Web Speech API - free & instant)
+    let recognition;
+    let isListening = false;
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SpeechRec();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+
+      recognition.onstart = () => {
+        isListening = true;
+        micBtn.classList.add('recording');
+        voiceStatus.innerText = "Listening...";
+        reactor.classList.add('active');
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        userInput.value = transcript;
+        sendMessage();
+      };
+
+      recognition.onend = () => {
+        isListening = false;
+        micBtn.classList.remove('recording');
+        voiceStatus.innerText = "Awaiting Directive";
+        reactor.classList.remove('active');
+      };
+    }
+
+    function toggleSpeechRecognition() {
+      if (!recognition) {
+        alert("Speech Recognition is not supported in this browser. You can type commands directly.");
+        return;
+      }
+      if (isListening) {
+        recognition.stop();
+      } else {
+        recognition.start();
+      }
+    }
+
+    async function sendMessage(textOverride = null) {
+      const text = textOverride || userInput.value.trim();
+      if (!text) return;
+
+      appendMessage(text, 'user');
+      userInput.value = '';
+      voiceStatus.innerText = "Analyzing Directive...";
+      reactor.classList.add('active');
+
+      try {
+        const response = await fetch('/api/command', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command: text })
+        });
+        const data = await response.json();
+
+        appendMessage(data.reply, 'esraa', data.tools);
+        voiceStatus.innerText = "Speaking...";
+
+        // Play the neural female voice
+        if (data.audio_url) {
+          audioPlayer.src = data.audio_url + '?t=' + Date.now();
+          audioPlayer.play().catch(e => console.log('Audio autoplay blocked:', e));
+          audioPlayer.onended = () => {
+            reactor.classList.remove('active');
+            voiceStatus.innerText = "Awaiting Directive";
+          };
+        } else {
+          reactor.classList.remove('active');
+          voiceStatus.innerText = "Awaiting Directive";
+        }
+
+      } catch (err) {
+        console.error(err);
+        appendMessage("An internal relay error occurred while connecting to my brain.", 'esraa');
+        reactor.classList.remove('active');
+        voiceStatus.innerText = "Awaiting Directive";
+      }
+    }
+
+    function appendMessage(text, sender, tools = []) {
+      const div = document.createElement('div');
+      div.className = `chat-msg ${sender}`;
+      let html = text;
+      if (tools && tools.length > 0) {
+        tools.forEach(t => {
+          if (t.tool) {
+            html += `<br><span class="tool-badge">EXECUTED: ${t.tool}</span>`;
+          }
+        });
+      }
+      div.innerHTML = html;
+      chatHistory.appendChild(div);
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
+
+    function quickAction(action, param) {
+      if (action === 'play_movie') {
+        sendMessage("Play a movie or open Netflix / YouTube movies");
+      } else if (action === 'open_youtube') {
+        sendMessage("Open YouTube in browser");
+      } else if (action === 'open_tab') {
+        sendMessage("Open a new browser tab");
+      } else if (action === 'launch_app') {
+        sendMessage(`Launch application ${param}`);
+      } else if (action === 'system_status') {
+        sendMessage("Report system diagnostic status");
+      }
+    }
+
+    async function saveConfiguration() {
+      const gemini = document.getElementById('cfg-gemini').value.trim();
+      const groq = document.getElementById('cfg-groq').value.trim();
+      const voice = document.getElementById('cfg-voice').value;
+      const feedback = document.getElementById('save-feedback');
+
+      feedback.innerText = "Updating...";
+      try {
+        const resp = await fetch('/api/settings', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ gemini_key: gemini, groq_key: groq, voice: voice })
+        });
+        const res = await resp.json();
+        feedback.innerText = "Settings successfully applied!";
+        setTimeout(() => feedback.innerText = "", 3000);
+      } catch (e) {
+        feedback.innerText = "Failed to save settings.";
+      }
+    }
+
+    // Update system HUD statistics every 3 seconds
+    setInterval(async () => {
+      try {
+        const r = await fetch('/api/telemetry');
+        const d = await r.json();
+        document.getElementById('hud-cpu').innerText = d.cpu_percent;
+        document.getElementById('hud-ram').innerText = d.ram_used_gb.split(' ')[0] + ' GB';
+      } catch (e) {}
+    }, 3000);
+  </script>
+</body>
+</html>
