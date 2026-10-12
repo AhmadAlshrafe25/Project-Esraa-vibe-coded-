@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Secrets and Environment Variables
+.env
+.env.local
+*.key
+credentials.json
+token.json
+
+# Audio and media cache
+*.mp3
+*.wav
+*.ogg
+cache/
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
