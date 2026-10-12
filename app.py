@@ -51,12 +51,11 @@ def continuous_conversation_loop():
     silence_count = 0
     while True:
         try:
-            print("\r\033[1;35m[🎙️ Listening for speech...]\033[0m      ", end="", flush=True)
-            audio_file = stt_engine.record_until_finished(max_wait_sec=10.0, silence_threshold_sec=1.1)
+            audio_file = stt_engine.record_until_finished(max_wait_sec=12.0, silence_threshold_sec=1.2)
             
             if not audio_file:
                 silence_count += 1
-                if silence_count >= 5:
+                if silence_count >= 8:
                     print("\r\033[1;33m[Paused due to inactivity. Press ENTER to talk again.]\033[0m\n")
                     break
                 continue
