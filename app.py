@@ -45,36 +45,41 @@ async def handle_turn(text: str) -> bool:
     return True
 
 def continuous_conversation_loop():
-    """Continuous conversation loop: listens, replies, and immediately listens for your next response!"""
-    print("\n\033[1;32m[⚡ CONTINUOUS CONVERSATION ACTIVE]\033[0m Speak freely! (Say 'stop' or press Ctrl+C to pause)\n")
+    """Continuous conversation loop: dynamically listens until you finish speaking, replies, and immediately resumes listening!"""
+    print("\n\033[1;32m[⚡ CONTINUOUS CONVERSATION ACTIVE]\033[0m Speak freely! (Say 'stop', 'bye', or press Ctrl+C to pause)\n")
     
     silence_count = 0
     while True:
         try:
-            print("\033[1;35m[🎙️ Listening...]\033[0m")
-            audio_file = stt_engine.record_mic_audio(duration_sec=3)
-            transcription = stt_engine.transcribe_audio_file(audio_file)
+            print("\r\033[1;35m[🎙️ Listening for speech...]\033[0m      ", end="", flush=True)
+            audio_file = stt_engine.record_until_finished(max_wait_sec=10.0, silence_threshold_sec=1.1)
             
-            if not transcription or not transcription.strip():
+            if not audio_file:
                 silence_count += 1
-                if silence_count >= 4:
-                    print("\033[1;33m[Paused due to silence. Press ENTER to speak again.]\033[0m")
+                if silence_count >= 5:
+                    print("\r\033[1;33m[Paused due to inactivity. Press ENTER to talk again.]\033[0m\n")
                     break
                 continue
 
             silence_count = 0
+            print("\r\033[1;33m[⚡ Processing audio...]\033[0m          ", end="", flush=True)
+            transcription = stt_engine.transcribe_audio_file(audio_file)
+            print("\r" + " " * 35 + "\r", end="", flush=True)
+            
+            if not transcription or not transcription.strip():
+                continue
+
             should_continue = asyncio.run(handle_turn(transcription))
             if not should_continue:
                 break
 
-            # Short pause before next listen
-            time.sleep(0.3)
+            time.sleep(0.2)
 
         except KeyboardInterrupt:
             print("\n\033[1;33m[Conversation paused. Press ENTER to resume.]\033[0m\n")
             break
         except Exception as e:
-            print(f"[Error in loop]: {e}")
+            print(f"\n[Error in loop]: {e}\n")
             break
 
 def main():

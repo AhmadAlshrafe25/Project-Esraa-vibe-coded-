@@ -24,17 +24,22 @@ You have direct access to desktop tools:
 1. open_tab(url): Open a specific URL in browser
 2. search_web(query, engine): Search google, youtube, or wikipedia
 3. play_youtube(query): Search and play YouTube video / music
-4. launch_app(app_name): Launch desktop applications (chrome, firefox, terminal, calculator, etc.)
-5. play_media(media_path): Play a local movie or media file
-6. get_system_status(): Check CPU, RAM, disk, and time
-7. set_volume(percent): Change volume (0-100)
-8. remember_fact(topic, content): Store a fact or preference you learned about the user
-9. send_email(to_email, subject, body): Send an email
-10. send_telegram(text): Send a telegram message
+4. launch_app(app_name): Launch desktop applications (discord, brave, chrome, terminal, calculator, etc.)
+5. close_app(app_name): Close or terminate an application
+6. type_message(text, press_enter): Type out text into active window and optionally press Enter
+7. send_discord_message(message): Open Discord and type a message into chat
+8. take_screenshot(): Capture screen screenshot
+9. media_control(action): Control media (play, pause, play-pause, next, previous)
+10. get_system_status(): Check CPU, RAM, disk, battery, and time
+11. set_volume(percent): Change volume (0-100)
+12. remember_fact(topic, content): Store a fact or preference you learned about the user
+13. execute_shell_command(command): Run a safe terminal command on user request
+14. send_email(to_email, subject, body): Send an email
+15. send_telegram(text): Send a telegram message
 
 When the user asks you to perform an action, format tool calls in your response as JSON blocks inside ```tool_call ... ``` like:
 ```tool_call
-{{"tool": "open_tab", "args": {{"url": "https://netflix.com"}}}}
+{{"tool": "launch_app", "args": {{"app_name": "discord"}}}}
 ```
 Always maintain your witty, charming British banter!
 """
@@ -62,6 +67,16 @@ class BrainEngine:
                 res = BrowserManager.play_youtube_video_or_music(args.get("query", ""))
             elif tool_name == "launch_app":
                 res = AppManager.launch_app(args.get("app_name", ""))
+            elif tool_name == "close_app":
+                res = AppManager.close_app(args.get("app_name", ""))
+            elif tool_name == "type_message":
+                res = AppManager.type_message(args.get("text", ""), args.get("press_enter", True))
+            elif tool_name == "send_discord_message":
+                res = AppManager.send_discord_message(args.get("message", ""))
+            elif tool_name == "take_screenshot":
+                res = AppManager.take_screenshot()
+            elif tool_name == "media_control":
+                res = SystemManager.media_control(args.get("action", "play-pause"))
             elif tool_name == "play_media":
                 res = AppManager.play_media_file(args.get("media_path", ""))
             elif tool_name == "get_system_status":
@@ -71,6 +86,8 @@ class BrainEngine:
             elif tool_name == "remember_fact":
                 memory_service.remember_fact(args.get("topic", "general"), args.get("content", ""))
                 res = {"status": "success", "message": f"Learned fact about {args.get('topic')}"}
+            elif tool_name == "execute_shell_command":
+                res = SystemManager.execute_shell_command(args.get("command", ""))
             elif tool_name == "send_email":
                 res = CommsManager.send_email(args.get("to_email"), args.get("subject"), args.get("body"))
             elif tool_name == "send_telegram":
@@ -177,6 +194,16 @@ class BrainEngine:
                 tool_results.append({"error": str(e)})
 
         clean_text = re.sub(pattern, "", reply_text).strip()
+        if not clean_text and tool_results:
+            first_tool = tool_results[0].get("tool", "")
+            first_res = tool_results[0].get("result", {})
+            if first_tool == "get_system_status" and isinstance(first_res, dict):
+                clean_text = f"Systems nominal, sir. CPU at {first_res.get('cpu_percent', '--')}, RAM at {first_res.get('ram_used_gb', '--')}, battery at {first_res.get('battery', 'OK')}."
+            elif isinstance(first_res, dict) and "message" in first_res:
+                clean_text = first_res["message"]
+            else:
+                clean_text = f"Directive for {first_tool} completed, sir."
+
         return {
             "speech_text": clean_text,
             "full_reply": reply_text,
