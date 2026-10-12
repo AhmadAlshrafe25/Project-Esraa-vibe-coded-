@@ -9,7 +9,7 @@ from jarvis.memory import memory_service
 
 BANNER = """\033[1;36m
   ╔═══════════════════════════════════════════════════════════════╗
-  ║                 PROJECT ESRAA // DESKTOP CORE                ║
+  ║                  PROJECT EZRA // DESKTOP CORE                 ║
   ║      Continuous Conversation Mode • Ultra Low Latency         ║
   ╚═══════════════════════════════════════════════════════════════╝\033[0m"""
 
@@ -26,7 +26,7 @@ async def handle_turn(text: str) -> bool:
     clean = text.lower().strip()
     if clean in ("stop", "pause", "exit", "quit", "goodbye", "bye", "cancel"):
         farewell = "Understood. Pausing conversation loop, sir."
-        print(f"\n\033[1;36m[Esraa]:\033[0m {farewell}\n")
+        print(f"\n\033[1;36m[Ezra]:\033[0m {farewell}\n")
         voice_speaker.speak(farewell)
         return False
 
@@ -40,7 +40,7 @@ async def handle_turn(text: str) -> bool:
             if "tool" in t:
                 print(f"\033[1;33m[Action Executed]:\033[0m {t['tool']}")
 
-    print(f"\033[1;36m[Esraa]:\033[0m {reply_speech}")
+    print(f"\033[1;36m[Ezra]:\033[0m {reply_speech}")
     voice_speaker.speak(reply_speech)
     return True
 
@@ -80,7 +80,7 @@ def continuous_conversation_loop():
 def main():
     print_banner()
     initial_greet = "Systems operational, sir. How can I assist you today?"
-    print(f"\033[1;36m[Esraa]:\033[0m {initial_greet}\n")
+    print(f"\033[1;36m[Ezra]:\033[0m {initial_greet}\n")
     voice_speaker.speak(initial_greet)
 
     while True:
@@ -98,7 +98,7 @@ def main():
                 asyncio.run(handle_turn(user_choice))
 
         except KeyboardInterrupt:
-            print("\nShutting down Project Esraa.")
+            print("\nShutting down Project Ezra.")
             break
         except Exception as e:
             print(f"[Error]: {e}")

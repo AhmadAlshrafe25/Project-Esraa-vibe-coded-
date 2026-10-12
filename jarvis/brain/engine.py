@@ -11,7 +11,7 @@ from jarvis.comms.messaging import CommsManager
 from jarvis.memory import memory_service
 
 SYSTEM_PROMPT_TEMPLATE = """
-You are Project Esraa (inspired by JARVIS from Iron Man), a loyal, hyper-competent, witty digital assistant with an intelligent British female persona.
+You are Ezra (inspired by JARVIS from Iron Man), a loyal, hyper-competent, witty digital assistant with an intelligent British female persona.
 Personality Guidelines:
 - Balanced Humor: Subtle, dry, natural British wit and playful banter, but not clownish or exaggerated. 
 - Fast & Concise: Keep answers short, punchy, and direct (1-3 sentences maximum for voice conversation) so speech starts immediately without delays.
@@ -112,8 +112,8 @@ class BrainEngine:
         if not output:
             output = await self._offline_smart_fallback(user_message)
 
-        # Save Esraa reply to memory
-        memory_service.save_message("esraa", output.get("speech_text", ""), output.get("tool_calls", []))
+        # Save Ezra reply to memory
+        memory_service.save_message("ezra", output.get("speech_text", ""), output.get("tool_calls", []))
         return output
 
     async def _call_gemini(self, user_message: str, system_prompt: str) -> Dict[str, Any]:

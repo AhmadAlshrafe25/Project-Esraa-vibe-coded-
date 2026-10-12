@@ -87,7 +87,7 @@ class MemoryManager:
 
     def export_backup_json(self) -> Path:
         """Exports full database to a clean JSON file ready for Google Drive backup."""
-        backup_file = PROJECT_ROOT / "data" / "esraa_gdrive_sync.json"
+        backup_file = PROJECT_ROOT / "data" / "ezra_gdrive_sync.json"
         data = {
             "exported_at": datetime.datetime.now().isoformat(),
             "facts": self.get_all_facts(),

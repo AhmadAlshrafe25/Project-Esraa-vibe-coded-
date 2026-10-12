@@ -1,4 +1,4 @@
-# Project-Esraa-vibe-coded- (JARVIS)
+# Project Ezra (JARVIS)
 
 > **"Sometimes you gotta run before you can walk."**  
 > An autonomous, ultra-efficient, budget-friendly AI desktop assistant inspired by Tony Stark's JARVIS.

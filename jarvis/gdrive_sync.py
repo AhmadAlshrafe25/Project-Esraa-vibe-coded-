@@ -16,7 +16,7 @@ POSSIBLE_GDRIVE_DIRS = [
 ]
 
 class GDriveSync:
-    """Handles Google Drive sync and export for Project Esraa chats and learned facts."""
+    """Handles Google Drive sync and export for Project Ezra chats and learned facts."""
 
     @staticmethod
     def sync_to_drive() -> dict:
@@ -26,7 +26,7 @@ class GDriveSync:
         target_dir = None
         for p in POSSIBLE_GDRIVE_DIRS:
             if p.exists() and p.is_dir():
-                target_dir = p / "ProjectEsraa_Backups"
+                target_dir = p / "ProjectEzra_Backups"
                 break
         
         # If no local Google Drive mount folder found yet, save in data/exports and prepare it for easy upload

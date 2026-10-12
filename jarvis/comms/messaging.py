@@ -17,7 +17,7 @@ class CommsManager:
         
         try:
             msg = MIMEMultipart()
-            msg['From'] = f"Project Esraa <{EMAIL_USER}>"
+            msg['From'] = f"Project Ezra <{EMAIL_USER}>"
             msg['To'] = to_email
             msg['Subject'] = subject
             msg.attach(MIMEText(body, 'plain'))
