@@ -1,16 +1,37 @@
-import webbrowser
-import urllib.parse
-import subprocess
+import os
 import shutil
+import subprocess
+import urllib.parse
+import webbrowser
 
 class BrowserManager:
-    """Manages browser tabs, video searches, web navigation."""
+    """Manages browser tabs, video searches, web navigation with native Linux & Flatpak support."""
+
+    @staticmethod
+    def _launch_url_reliably(url: str):
+        # 1. Try xdg-open directly (most reliable on modern Linux desktops)
+        if shutil.which("xdg-open"):
+            try:
+                subprocess.Popen(["xdg-open", url], start_new_session=True)
+                return
+            except Exception:
+                pass
+
+        # 2. Try Brave Flatpak directly if installed
+        try:
+            subprocess.Popen(["flatpak", "run", "com.brave.Browser", url], start_new_session=True)
+            return
+        except Exception:
+            pass
+
+        # 3. Standard Python webbrowser fallback
+        webbrowser.open_new_tab(url)
 
     @staticmethod
     def open_url(url: str) -> dict:
         if not url.startswith("http://") and not url.startswith("https://"):
             url = f"https://{url}"
-        webbrowser.open_new_tab(url)
+        BrowserManager._launch_url_reliably(url)
         return {"status": "success", "message": f"Opened {url} in browser."}
 
     @staticmethod
@@ -22,13 +43,14 @@ class BrowserManager:
             url = f"https://en.wikipedia.org/wiki/Special:Search?search={encoded}"
         else:
             url = f"https://www.google.com/search?q={encoded}"
-        webbrowser.open_new_tab(url)
+        BrowserManager._launch_url_reliably(url)
         return {"status": "success", "message": f"Searching {engine} for '{query}'."}
 
     @staticmethod
     def play_youtube_video_or_music(query: str) -> dict:
         """Searches YouTube and opens it directly."""
-        encoded = urllib.parse.quote_plus(query)
+        clean_q = query.strip()
+        encoded = urllib.parse.quote_plus(clean_q)
         url = f"https://www.youtube.com/results?search_query={encoded}"
-        webbrowser.open_new_tab(url)
-        return {"status": "success", "message": f"Playing '{query}' on YouTube."}
+        BrowserManager._launch_url_reliably(url)
+        return {"status": "success", "message": f"Playing '{clean_q}' on YouTube."}
