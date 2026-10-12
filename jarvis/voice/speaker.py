@@ -9,6 +9,7 @@ import hashlib
 import asyncio
 import subprocess
 import threading
+import shutil
 import concurrent.futures
 import edge_tts
 import requests
@@ -98,11 +99,18 @@ class SmoothSpeaker:
         # 3. Setup microphone barge-in process
         mic_proc = None
         try:
-            mic_proc = subprocess.Popen(
-                ["arecord", "-D", "default", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw", "-q"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL
-            )
+            if shutil.which("parec"):
+                mic_proc = subprocess.Popen(
+                    ["parec", "--rate=16000", "--channels=1", "--format=s16le", "--raw"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL
+                )
+            else:
+                mic_proc = subprocess.Popen(
+                    ["arecord", "-D", "default", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw", "-q"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL
+                )
         except Exception:
             mic_proc = None
 
@@ -138,9 +146,9 @@ class SmoothSpeaker:
                                     baseline_bleed = sum(calibration) / len(calibration)
                             else:
                                 if baseline_bleed < 2500:
-                                    voice_threshold = max(baseline_bleed * 1.5, 3800.0)
+                                    voice_threshold = max(baseline_bleed * 1.8, 5500.0)
                                 else:
-                                    voice_threshold = max(baseline_bleed * 1.35, 27000.0)
+                                    voice_threshold = max(baseline_bleed * 1.5, 28000.0)
 
                                 if rms > voice_threshold:
                                     consecutive_voice_chunks += 1
