@@ -9,6 +9,7 @@ import hashlib
 import asyncio
 import subprocess
 import threading
+import concurrent.futures
 import edge_tts
 import requests
 import urllib.parse
@@ -233,11 +234,16 @@ class SmoothSpeaker:
         # 1. Primary: Silky Smooth Microsoft Neural Voice via Edge-TTS (Sonia then Jenny)
         for v in [self.voice, self.fallback_voice]:
             try:
-                loop = asyncio.new_event_loop()
-                audio_file = loop.run_until_complete(
-                    asyncio.wait_for(self._generate_edge_speech(clean_text, v), timeout=5.0)
-                )
-                loop.close()
+                # Instant disk cache check (0ms network latency)
+                cache_key = hashlib.md5(f"{v}_{clean_text}".encode("utf-8")).hexdigest()[:12]
+                cached_file = CACHE_DIR / f"smooth_{cache_key}.mp3"
+                if cached_file.exists() and cached_file.stat().st_size > 500:
+                    return self._play_file_with_interrupt(str(cached_file), text=clean_text, prefix=prefix, live_print=live_print)
+
+                # Generate via isolated ThreadPoolExecutor to prevent unawaited coroutine warnings and loop collisions
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    audio_file = pool.submit(asyncio.run, self._generate_edge_speech(clean_text, v)).result(timeout=6.0)
+
                 if audio_file and os.path.exists(audio_file):
                     return self._play_file_with_interrupt(audio_file, text=clean_text, prefix=prefix, live_print=live_print)
             except Exception:
