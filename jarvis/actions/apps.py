@@ -81,17 +81,60 @@ class AppManager:
         return {"status": "success", "message": f"Sent termination signal to {app_name}."}
 
     @staticmethod
-    def type_message(text: str, press_enter: bool = True) -> dict:
-        """Types out text into whatever window is currently focused on your desktop and presses Enter."""
+    def type_message(text: str, press_enter: bool = False, delay_sec: float = 0.3) -> dict:
+        """Types or pastes text into the currently active window on your desktop.
+        Uses system clipboard paste (pyperclip + Ctrl+V) for instantaneous, unicode-safe typing,
+        with automatic fallback to key simulation.
+        """
         try:
-            time.sleep(0.3)
-            pyautogui.write(text, interval=0.01)
+            time.sleep(delay_sec)
+            pasted = False
+            try:
+                import pyperclip
+                pyperclip.copy(text)
+                time.sleep(0.05)
+                pyautogui.hotkey('ctrl', 'v')
+                pasted = True
+            except Exception:
+                pass
+
+            if not pasted:
+                pyautogui.write(text, interval=0.005)
+
             if press_enter:
                 time.sleep(0.1)
                 pyautogui.press('enter')
-            return {"status": "success", "message": f"Typed '{text}' and {'pressed Enter' if press_enter else 'left open'}."}
+
+            preview = text[:60] + ("..." if len(text) > 60 else "")
+            return {
+                "status": "success",
+                "message": f"Successfully typed: '{preview}'{' and pressed Enter' if press_enter else ''}."
+            }
         except Exception as e:
-            return {"status": "error", "message": f"Failed to type message: {e}"}
+            return {"status": "error", "message": f"Failed to type text: {e}"}
+
+    @staticmethod
+    def dictate_text(text: str, press_enter: bool = False) -> dict:
+        """Dedicated dictation tool: types exactly what the user dictates into their active window."""
+        return AppManager.type_message(text=text, press_enter=press_enter, delay_sec=0.2)
+
+    @staticmethod
+    def press_key(key: str) -> dict:
+        """Presses a single key (e.g. 'enter', 'tab', 'esc', 'backspace', 'down')."""
+        try:
+            pyautogui.press(key.lower().strip())
+            return {"status": "success", "message": f"Pressed key '{key}'."}
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to press key: {e}"}
+
+    @staticmethod
+    def press_hotkey(keys: list) -> dict:
+        """Presses a combination of keys (e.g. ['ctrl', 's'], ['ctrl', 'c'], ['alt', 'tab'])."""
+        try:
+            pyautogui.hotkey(*[k.lower().strip() for k in keys])
+            return {"status": "success", "message": f"Pressed shortcut: {'+'.join(keys)}."}
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to press shortcut: {e}"}
 
     @staticmethod
     def send_discord_message(message: str) -> dict:

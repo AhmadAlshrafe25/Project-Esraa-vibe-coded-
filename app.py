@@ -15,12 +15,13 @@ BANNER = """\033[1;36m
   ╚═══════════════════════════════════════════════════════════════╝\033[0m"""
 
 def print_banner():
+    voice_status = "\033[1;31mMuted (Silent Mode)\033[0m" if voice_speaker.is_muted else "\033[1;32mActive (Silky Neural)\033[0m"
     print(BANNER)
-    print("\033[1;32m[+] Engine:\033[0m Gemini 3.5 Flash (Adaptive Learning Enabled)")
-    print("\033[1;32m[+] Voice:\033[0m Silky Smooth Neural Voice (Sonia & Jenny)")
+    print("\033[1;32m[+] Engine:\033[0m Gemini 3.5 Flash (Vision & Real-Time APIs)")
+    print(f"\033[1;32m[+] Voice:\033[0m {voice_status}")
     print("\033[1;32m[+] Memory:\033[0m Google Drive Two-Way Synchronizer Active")
-    print("\033[1;33m[!] Press ENTER once to activate Continuous Conversation Mode!\033[0m")
-    print("\033[1;33m[!] Speak naturally back and forth. Say 'stop', 'bye', or press Ctrl+C to pause.\033[0m")
+    print("\033[1;33m[!] Press ENTER once to activate Hands-Free Conversation!\033[0m")
+    print("\033[1;33m[!] Commands: Type directly, or use /mute, /unmute, or speak 'be quiet' / 'talk to me'.\033[0m")
     print("-" * 65 + "\n")
 
 async def handle_turn(text: str) -> bool:
@@ -48,7 +49,8 @@ async def handle_turn(text: str) -> bool:
                 print(f"\033[1;33m[Action Executed]:\033[0m {t['tool']}")
 
     # Moving typewriter print
-    visualizer.moving_print(reply_speech, prefix="\033[1;36m[Ezra]:\033[0m ", delay=0.015)
+    prefix = "\033[1;35m[Ezra (Silent)]:\033[0m " if voice_speaker.is_muted else "\033[1;36m[Ezra]:\033[0m "
+    visualizer.moving_print(reply_speech, prefix=prefix, delay=0.015)
     voice_speaker.speak(reply_speech)
     return True
 
@@ -96,17 +98,36 @@ def main():
 
     print_banner()
     initial_greet = "Systems operational, sir. How can I assist you today?"
-    visualizer.moving_print(initial_greet, prefix="\033[1;36m[Ezra]:\033[0m ")
+    prefix = "\033[1;35m[Ezra (Silent)]:\033[0m " if voice_speaker.is_muted else "\033[1;36m[Ezra]:\033[0m "
+    visualizer.moving_print(initial_greet, prefix=prefix)
     voice_speaker.speak(initial_greet)
 
     while True:
         try:
-            user_choice = input("\033[1;37m[Press ENTER to start Conversation, or type directly, 'exit' to quit] > \033[0m").strip()
+            prompt_str = f"\033[1;37m[{'MUTED' if voice_speaker.is_muted else 'VOICE'} | ENTER for Conversation, type command, 'exit'] > \033[0m"
+            user_choice = input(prompt_str).strip()
             
             if user_choice.lower() in ("exit", "quit", "q"):
                 print("Powering down. Goodbye, sir.")
                 gdrive_sync.push_to_drive()
                 break
+
+            if user_choice.lower() in ("/mute", "mute"):
+                voice_speaker.set_muted(True)
+                print("\033[1;33m[Ezra Voice: Muted (Silent Mode Active)]\033[0m\n")
+                continue
+
+            if user_choice.lower() in ("/unmute", "unmute"):
+                voice_speaker.set_muted(False)
+                print("\033[1;32m[Ezra Voice: Active (Silky Neural Voice Enabled)]\033[0m\n")
+                voice_speaker.speak("Voice restored, sir.")
+                continue
+
+            if user_choice.lower() == "/voice":
+                is_muted = voice_speaker.toggle_mute()
+                status = "Muted (Silent Mode)" if is_muted else "Active"
+                print(f"\033[1;33m[Ezra Voice: {status}]\033[0m\n")
+                continue
 
             if not user_choice:
                 # Trigger continuous multi-turn hands-free conversation

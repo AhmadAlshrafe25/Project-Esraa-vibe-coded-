@@ -9,6 +9,8 @@ from jarvis.actions.browser import BrowserManager
 from jarvis.actions.apps import AppManager
 from jarvis.actions.system import SystemManager
 from jarvis.actions.vision import screen_vision
+from jarvis.actions.apis import api_manager
+from jarvis.voice.speaker import voice_speaker
 from jarvis.comms.messaging import CommsManager
 from jarvis.memory import memory_service
 
@@ -25,27 +27,38 @@ Learned Context about User:
 {learned_context}
 
 You have direct access to desktop tools:
-1. inspect_screen(instruction): Visually see the user's screen in real time with your multimodal vision eyes (describe what's open, read errors, inspect chat/code)
+1. inspect_screen(instruction): Visually see the user's screen in real time with your multimodal vision eyes
 2. click_screen_element(description): Visually find a UI button/field on screen and click it
-3. open_tab(url): Open a specific URL in browser
-4. search_web(query, engine): Search google, youtube, or wikipedia
-5. play_youtube(query): Search and play YouTube video / music
-6. launch_app(app_name): Launch desktop applications (discord, brave, chrome, terminal, calculator, etc.)
-7. close_app(app_name): Close or terminate an application
-8. type_message(text, press_enter): Type out text into active window and optionally press Enter
-9. send_discord_message(message): Open Discord and type a message into chat
-10. take_screenshot(): Capture screen screenshot
-11. media_control(action): Control media (play, pause, play-pause, next, previous)
-12. get_system_status(): Check CPU, RAM, disk, battery, and time
-13. set_volume(percent): Change volume (0-100)
-14. remember_fact(topic, content): Store a fact or preference you learned about the user
-15. execute_shell_command(command): Run a safe terminal command on user request
-16. send_email(to_email, subject, body): Send an email
-17. send_telegram(text): Send a telegram message
+3. type_message(text, press_enter): Type/paste text into the active focused window (supports unicode, code, multiline, emojis)
+4. dictate_text(text, press_enter): Dictate and type exact spoken words into active window/editor
+5. press_key(key): Press a keyboard key ('enter', 'tab', 'esc', 'backspace', etc.)
+6. press_hotkey(keys): Press key shortcut (e.g. ['ctrl', 's'], ['ctrl', 'c'])
+7. toggle_voice(enabled): Turn your spoken voice on (true) or mute it into silent text mode (false)
+8. get_weather(city): Fetch real-time weather, temperature, humidity, and condition
+9. get_crypto_price(coins, currency): Live prices and 24h changes for crypto (bitcoin, ethereum, solana)
+10. get_exchange_rate(base_currency, target_currency): Real-time currency exchange rates (USD, EUR, GBP, EGP, SAR)
+11. search_wikipedia(query): Fetch encyclopedic summaries, facts, and definitions
+12. get_network_info(): Check public IP, local Wi-Fi SSID, and ping latency
+13. get_tech_news(limit): Top trending tech headlines from Hacker News
+14. get_github_info(username, repo): Inspect GitHub user profiles, repos, stars, or commits
+15. open_tab(url): Open a specific URL in browser
+16. search_web(query, engine): Search google, youtube, or wikipedia
+17. play_youtube(query): Search and play YouTube video / music
+18. launch_app(app_name): Launch desktop applications (discord, brave, chrome, terminal, calculator, etc.)
+19. close_app(app_name): Close or terminate an application
+20. send_discord_message(message): Open Discord and type a message into chat
+21. take_screenshot(): Capture screen screenshot
+22. media_control(action): Control media (play, pause, play-pause, next, previous)
+23. get_system_status(): Check CPU, RAM, disk, battery, and time
+24. set_volume(percent): Change volume (0-100)
+25. remember_fact(topic, content): Store a fact or preference you learned about the user
+26. execute_shell_command(command): Run a safe terminal command on user request
+27. send_email(to_email, subject, body): Send an email
+28. send_telegram(text): Send a telegram message
 
 When the user asks you to perform an action, format tool calls in your response as JSON blocks inside ```tool_call ... ``` like:
 ```tool_call
-{{"tool": "launch_app", "args": {{"app_name": "discord"}}}}
+{{"tool": "type_message", "args": {{"text": "Hello world", "press_enter": false}}}}
 ```
 Always maintain your witty, charming British banter!
 """
@@ -70,6 +83,33 @@ class BrainEngine:
                 res = {"status": "success", "message": vision_analysis, "screen_vision": vision_analysis}
             elif tool_name == "click_screen_element":
                 res = screen_vision.locate_and_click(args.get("description", ""))
+            elif tool_name == "type_message":
+                res = AppManager.type_message(args.get("text", ""), args.get("press_enter", False))
+            elif tool_name == "dictate_text":
+                res = AppManager.dictate_text(args.get("text", ""), args.get("press_enter", False))
+            elif tool_name == "press_key":
+                res = AppManager.press_key(args.get("key", "enter"))
+            elif tool_name == "press_hotkey":
+                res = AppManager.press_hotkey(args.get("keys", []))
+            elif tool_name == "toggle_voice":
+                enabled = bool(args.get("enabled", True))
+                voice_speaker.set_muted(not enabled)
+                status_str = "unmuted and will speak aloud" if enabled else "muted in silent text mode"
+                res = {"status": "success", "message": f"My voice is now {status_str}, sir."}
+            elif tool_name == "get_weather":
+                res = api_manager.get_weather(args.get("city", ""))
+            elif tool_name == "get_crypto_price":
+                res = api_manager.get_crypto_price(args.get("coins", "bitcoin,ethereum"), args.get("currency", "usd"))
+            elif tool_name == "get_exchange_rate":
+                res = api_manager.get_exchange_rate(args.get("base_currency", "USD"), args.get("target_currency", "EUR"))
+            elif tool_name == "search_wikipedia":
+                res = api_manager.search_wikipedia(args.get("query", ""))
+            elif tool_name == "get_network_info":
+                res = api_manager.get_network_info()
+            elif tool_name == "get_tech_news":
+                res = api_manager.get_tech_news(int(args.get("limit", 5)))
+            elif tool_name == "get_github_info":
+                res = api_manager.get_github_info(args.get("username", "AhmadAlshrafe25"), args.get("repo", ""))
             elif tool_name == "open_tab":
                 res = BrowserManager.open_url(args.get("url", ""))
             elif tool_name == "search_web":
@@ -80,8 +120,6 @@ class BrainEngine:
                 res = AppManager.launch_app(args.get("app_name", ""))
             elif tool_name == "close_app":
                 res = AppManager.close_app(args.get("app_name", ""))
-            elif tool_name == "type_message":
-                res = AppManager.type_message(args.get("text", ""), args.get("press_enter", True))
             elif tool_name == "send_discord_message":
                 res = AppManager.send_discord_message(args.get("message", ""))
             elif tool_name == "take_screenshot":
@@ -209,15 +247,42 @@ class BrainEngine:
                 tool_results.append({"error": str(e)})
 
         clean_text = re.sub(pattern, "", reply_text).strip()
-        if not clean_text and tool_results:
+        tool_speech = None
+        if tool_results:
             first_tool = tool_results[0].get("tool", "")
             first_res = tool_results[0].get("result", {})
-            if first_tool == "get_system_status" and isinstance(first_res, dict):
-                clean_text = f"Systems nominal, sir. CPU at {first_res.get('cpu_percent', '--')}, RAM at {first_res.get('ram_used_gb', '--')}, battery at {first_res.get('battery', 'OK')}."
-            elif isinstance(first_res, dict) and "message" in first_res:
-                clean_text = first_res["message"]
-            else:
-                clean_text = f"Directive for {first_tool} completed, sir."
+            if isinstance(first_res, dict):
+                if first_tool == "get_system_status":
+                    tool_speech = f"Systems nominal, sir. CPU at {first_res.get('cpu_percent', '--')}, RAM at {first_res.get('ram_used_gb', '--')}, battery at {first_res.get('battery', 'OK')}."
+                elif first_tool == "get_crypto_price" and "data" in first_res:
+                    prices_str = ", ".join([f"{k.capitalize()} is at {v.get('price', '')}" for k, v in first_res["data"].items()])
+                    tool_speech = f"Live market figures: {prices_str}."
+                elif first_tool == "get_network_info" and "network" in first_res:
+                    net = first_res.get("network", {})
+                    tool_speech = f"Public IP is {net.get('public_ip', '--')}, Wi-Fi is {net.get('wifi_ssid', '--')}, latency {net.get('ping_latency', '--')}."
+                elif first_tool == "get_tech_news" and "articles" in first_res:
+                    titles = "; ".join([a.get('title', '') for a in first_res["articles"][:3]])
+                    tool_speech = f"Top headlines right now: {titles}."
+                elif first_tool == "get_github_info":
+                    if "recent_repos" in first_res:
+                        repos = ", ".join(first_res["recent_repos"][:4])
+                        tool_speech = f"User {first_res.get('username')} has {first_res.get('public_repos_count')} repos, including {repos}."
+                    elif "description" in first_res:
+                        tool_speech = f"Repo {first_res.get('repo_name')} ({first_res.get('stars')} stars): {first_res.get('description')}."
+                elif "summary" in first_res:
+                    tool_speech = first_res["summary"]
+                elif "extract" in first_res:
+                    tool_speech = first_res["extract"]
+                elif "message" in first_res and not clean_text:
+                    tool_speech = first_res["message"]
+
+        if tool_speech:
+            if not clean_text:
+                clean_text = tool_speech
+            elif any(first_tool.startswith(prefix) for prefix in ["get_", "search_", "inspect_"]):
+                clean_text = f"{clean_text} {tool_speech}"
+        elif not clean_text and tool_results:
+            clean_text = f"Directive for {tool_results[0].get('tool', 'command')} completed, sir."
 
         return {
             "speech_text": clean_text,
@@ -241,6 +306,56 @@ class BrainEngine:
             return {
                 "speech_text": f"Systems operational. CPU load is at {res['cpu_percent']}, and memory usage is {res['ram_used_gb']}.",
                 "tool_calls": [{"tool": "get_system_status", "result": res}]
+            }
+
+        if "mute" in msg or "be quiet" in msg or "silent" in msg or "shh" in msg or "stop talking" in msg:
+            voice_speaker.set_muted(True)
+            return {
+                "speech_text": "Understood. Voice muted. I am operating in silent text mode.",
+                "tool_calls": [{"tool": "toggle_voice", "result": {"status": "success", "message": "Voice muted"}}]
+            }
+
+        if "unmute" in msg or "speak up" in msg or "voice on" in msg or "talk to me" in msg:
+            voice_speaker.set_muted(False)
+            return {
+                "speech_text": "Voice restored, sir. Ready and listening.",
+                "tool_calls": [{"tool": "toggle_voice", "result": {"status": "success", "message": "Voice unmuted"}}]
+            }
+
+        if msg.startswith("type ") or msg.startswith("dictate ") or msg.startswith("write "):
+            text_to_type = re.sub(r"^(type|dictate|write)\s*(this|out|for me|the following)?\s*:?\s*", "", user_message, flags=re.IGNORECASE).strip()
+            res = AppManager.type_message(text_to_type, press_enter=False)
+            return {
+                "speech_text": f"Typed '{text_to_type[:40]}' for you, sir.",
+                "tool_calls": [{"tool": "type_message", "result": res}]
+            }
+
+        if "weather" in msg or "temperature" in msg:
+            city_match = re.search(r"in ([a-zA-Z\s]+)", msg)
+            city = city_match.group(1).strip() if city_match else ""
+            res = api_manager.get_weather(city)
+            summary = res.get("summary", "Could not retrieve weather details.")
+            return {
+                "speech_text": summary,
+                "tool_calls": [{"tool": "get_weather", "result": res}]
+            }
+
+        if "crypto" in msg or "bitcoin" in msg or "btc" in msg or "ethereum" in msg:
+            res = api_manager.get_crypto_price()
+            data = res.get("data", {})
+            btc_p = data.get("bitcoin", {}).get("price", "unknown")
+            eth_p = data.get("ethereum", {}).get("price", "unknown")
+            return {
+                "speech_text": f"Bitcoin is at {btc_p}, and Ethereum is at {eth_p}.",
+                "tool_calls": [{"tool": "get_crypto_price", "result": res}]
+            }
+
+        if "network" in msg or "wifi" in msg or "ip" in msg:
+            res = api_manager.get_network_info()
+            net = res.get("network", {})
+            return {
+                "speech_text": f"Public IP is {net.get('public_ip')}, Wi-Fi is {net.get('wifi_ssid')}, and ping latency is {net.get('ping_latency')}.",
+                "tool_calls": [{"tool": "get_network_info", "result": res}]
             }
 
         if "screen" in msg or "look" in msg:

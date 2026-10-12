@@ -27,6 +27,16 @@ class SmoothSpeaker:
         self.voice = voice  # Smooth British neural female voice (Sonia)
         self.fallback_voice = "en-US-JennyNeural"
         self._offline_engine = None
+        self.is_muted: bool = False
+
+    def set_muted(self, muted: bool):
+        """Sets mute state. When True, Ezra outputs purely text without speaking aloud."""
+        self.is_muted = bool(muted)
+
+    def toggle_mute(self) -> bool:
+        """Toggles between voice speech and silent mode."""
+        self.is_muted = not self.is_muted
+        return self.is_muted
 
     def _init_offline(self):
         if not self._offline_engine:
@@ -56,7 +66,7 @@ class SmoothSpeaker:
 
     def speak(self, text: str):
         """Speaks with smooth, human neural voice directly through laptop speakers."""
-        if not text or not text.strip():
+        if self.is_muted or not text or not text.strip():
             return
 
         clean_text = text.strip()[:400]

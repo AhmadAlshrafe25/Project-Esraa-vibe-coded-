@@ -6,14 +6,17 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
-# LLM Keys
+# LLM & External Keys
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+DEFAULT_CITY = os.getenv("DEFAULT_CITY", "Amman")
 
 # Voice Settings (Default: Sonia British neural female voice)
 DEFAULT_VOICE = os.getenv("DEFAULT_VOICE", "en-GB-SoniaNeural")
 VOICE_RATE = os.getenv("VOICE_RATE", "+0%")
 VOICE_PITCH = os.getenv("VOICE_PITCH", "+0Hz")
+VOICE_MUTED = os.getenv("VOICE_MUTED", "False").lower() in ("true", "1", "yes")
 
 # Application & Media
 DEFAULT_BROWSER = os.getenv("DEFAULT_BROWSER", "")
