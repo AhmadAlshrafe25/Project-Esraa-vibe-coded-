@@ -74,6 +74,13 @@ class MemoryManager:
                 })
             return history
 
+    def _sync_to_gdrive(self):
+        try:
+            from jarvis.gdrive_sync import gdrive_sync
+            gdrive_sync.push_to_drive()
+        except Exception:
+            pass
+
     def remember_fact(self, topic: str, content: str):
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
@@ -83,6 +90,7 @@ class MemoryManager:
                 ON CONFLICT(topic) DO UPDATE SET content=excluded.content, updated_at=excluded.updated_at
             """, (topic, content, datetime.datetime.now().isoformat()))
             conn.commit()
+        self._sync_to_gdrive()
 
     def update_profile(self, key: str, value: str):
         with sqlite3.connect(DB_PATH) as conn:
@@ -93,6 +101,7 @@ class MemoryManager:
                 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
             """, (key, value, datetime.datetime.now().isoformat()))
             conn.commit()
+        self._sync_to_gdrive()
 
     def get_all_facts(self) -> dict:
         facts = {}

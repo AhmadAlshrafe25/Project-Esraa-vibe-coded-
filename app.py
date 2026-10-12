@@ -18,6 +18,7 @@ def print_banner():
     print(BANNER)
     print("\033[1;32m[+] Engine:\033[0m Gemini 3.5 Flash (Adaptive Learning Enabled)")
     print("\033[1;32m[+] Voice:\033[0m Silky Smooth Neural Voice (Sonia & Jenny)")
+    print("\033[1;32m[+] Memory:\033[0m Google Drive Two-Way Synchronizer Active")
     print("\033[1;33m[!] Press ENTER once to activate Continuous Conversation Mode!\033[0m")
     print("\033[1;33m[!] Speak naturally back and forth. Say 'stop', 'bye', or press Ctrl+C to pause.\033[0m")
     print("-" * 65 + "\n")
@@ -89,6 +90,10 @@ def continuous_conversation_loop():
             break
 
 def main():
+    # 1. Take memory from Google Drive on startup
+    from jarvis.gdrive_sync import gdrive_sync
+    gdrive_sync.pull_from_drive()
+
     print_banner()
     initial_greet = "Systems operational, sir. How can I assist you today?"
     visualizer.moving_print(initial_greet, prefix="\033[1;36m[Ezra]:\033[0m ")
@@ -100,6 +105,7 @@ def main():
             
             if user_choice.lower() in ("exit", "quit", "q"):
                 print("Powering down. Goodbye, sir.")
+                gdrive_sync.push_to_drive()
                 break
 
             if not user_choice:
@@ -110,6 +116,7 @@ def main():
 
         except KeyboardInterrupt:
             print("\nShutting down Project Ezra.")
+            gdrive_sync.push_to_drive()
             break
         except Exception as e:
             print(f"[Error]: {e}")

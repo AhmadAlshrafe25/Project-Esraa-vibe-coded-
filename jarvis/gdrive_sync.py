@@ -2,13 +2,13 @@ import os
 import json
 import shutil
 from pathlib import Path
+import requests
 from config.settings import PROJECT_ROOT
-from jarvis.memory import memory_service
 
-# Google Drive sync directories:
-# On Linux, users often mount or sync Google Drive using GNOME Online Accounts / Google-Drive-OCamlFuse / rclone / Insync:
-# Check standard mount locations:
-POSSIBLE_GDRIVE_DIRS = [
+DB_PATH = PROJECT_ROOT / "data" / "memory.db"
+DEFAULT_DRIVE_DIR = Path.home() / "GoogleDrive" / "ProjectEzra_Memory"
+
+POSSIBLE_GDRIVE_ROOTS = [
     Path.home() / "GoogleDrive",
     Path.home() / "Google Drive",
     Path.home() / "gdrive",
@@ -16,35 +16,105 @@ POSSIBLE_GDRIVE_DIRS = [
 ]
 
 class GDriveSync:
-    """Handles Google Drive sync and export for Project Ezra chats and learned facts."""
+    """Two-way Google Drive synchronization: Loads memory FROM Google Drive and saves updates TO Google Drive."""
 
     @staticmethod
-    def sync_to_drive() -> dict:
-        backup_file = memory_service.export_backup_json()
-        
-        # Look for existing mounted Google Drive folder
-        target_dir = None
-        for p in POSSIBLE_GDRIVE_DIRS:
-            if p.exists() and p.is_dir():
-                target_dir = p / "ProjectEzra_Backups"
-                break
-        
-        # If no local Google Drive mount folder found yet, save in data/exports and prepare it for easy upload
-        if not target_dir:
-            export_dir = PROJECT_ROOT / "data" / "gdrive_sync"
-            export_dir.mkdir(parents=True, exist_ok=True)
-            target_path = export_dir / backup_file.name
-            shutil.copy2(backup_file, target_path)
-            return {
-                "status": "ready_for_upload",
-                "message": f"Memory backup created at {target_path}. Connect Google Drive via rclone or GNOME Online Accounts for automatic live background sync.",
-                "backup_file": str(target_path)
-            }
+    def get_drive_target_dir() -> Path:
+        """Finds or prepares the Google Drive memory directory."""
+        # 1. Custom configured path in environment
+        custom_env = os.getenv("GDRIVE_PATH", "").strip()
+        if custom_env:
+            p = Path(custom_env)
+            p.mkdir(parents=True, exist_ok=True)
+            return p
 
-        target_dir.mkdir(parents=True, exist_ok=True)
-        dest = target_dir / backup_file.name
-        shutil.copy2(backup_file, dest)
+        # 2. Check GVFS GNOME Online Accounts mounts
+        gvfs_dir = Path("/run/user/1000/gvfs")
+        if gvfs_dir.exists():
+            for entry in gvfs_dir.iterdir():
+                if "google-drive" in entry.name.lower():
+                    target = entry / "ProjectEzra_Memory"
+                    target.mkdir(parents=True, exist_ok=True)
+                    return target
+
+        # 3. Check standard filesystem Google Drive locations
+        for root in POSSIBLE_GDRIVE_ROOTS:
+            if root.exists() and root.is_dir():
+                target = root / "ProjectEzra_Memory"
+                target.mkdir(parents=True, exist_ok=True)
+                return target
+
+        # 4. Default GoogleDrive directory in user home
+        DEFAULT_DRIVE_DIR.mkdir(parents=True, exist_ok=True)
+        return DEFAULT_DRIVE_DIR
+
+    @staticmethod
+    def pull_from_drive() -> bool:
+        """Loads and restores memory FROM Google Drive on startup."""
+        target_dir = GDriveSync.get_drive_target_dir()
+        drive_db = target_dir / "memory.db"
+        drive_json = target_dir / "ezra_gdrive_sync.json"
+
+        # If a newer database exists on Google Drive, take it!
+        if drive_db.exists() and drive_db.stat().st_size > 0:
+            local_mtime = DB_PATH.stat().st_mtime if DB_PATH.exists() else 0
+            drive_mtime = drive_db.stat().st_mtime
+            
+            # If Google Drive has database or local is missing/older
+            if not DB_PATH.exists() or drive_mtime >= local_mtime:
+                DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(drive_db, DB_PATH)
+                print(f"\033[1;32m[☁️ Google Drive Sync]: Restored latest memory.db from {drive_db}!\033[0m")
+                return True
+
+        if drive_json.exists():
+            print(f"\033[1;32m[☁️ Google Drive Sync]: Found backup JSON in Google Drive: {drive_json}\033[0m")
+            return True
+
+        return False
+
+    @staticmethod
+    def push_to_drive() -> dict:
+        """Saves all current memory, conversations, and learned facts TO Google Drive."""
+        from jarvis.memory import memory_service
+        target_dir = GDriveSync.get_drive_target_dir()
+        
+        # 1. Export clean JSON backup
+        backup_json = memory_service.export_backup_json()
+        dest_json = target_dir / "ezra_gdrive_sync.json"
+        shutil.copy2(backup_json, dest_json)
+
+        # 2. Copy the actual SQLite database file directly
+        dest_db = target_dir / "memory.db"
+        if DB_PATH.exists():
+            shutil.copy2(DB_PATH, dest_db)
+
+        # 3. Optional: Direct Cloud Google Drive API sync if OAuth token is provided
+        access_token = os.getenv("GDRIVE_ACCESS_TOKEN", "").strip()
+        cloud_status = "local_drive_synced"
+        if access_token:
+            try:
+                headers = {"Authorization": f"Bearer {access_token}"}
+                files = {
+                    'data': ('metadata', json.dumps({'name': 'ezra_memory.json'}), 'application/json'),
+                    'file': open(dest_json, 'rb')
+                }
+                r = requests.post(
+                    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+                    headers=headers,
+                    files=files,
+                    timeout=5.0
+                )
+                if r.status_code in (200, 201):
+                    cloud_status = "cloud_api_synced"
+            except Exception:
+                pass
+
         return {
-            "status": "synced",
-            "message": f"Successfully backed up all chats and learned memory to Google Drive at {dest}."
+            "status": "success",
+            "cloud_status": cloud_status,
+            "target_dir": str(target_dir),
+            "files_synced": ["memory.db", "ezra_gdrive_sync.json"]
         }
+
+gdrive_sync = GDriveSync()
