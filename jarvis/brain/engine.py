@@ -8,12 +8,17 @@ from jarvis.actions.browser import BrowserManager
 from jarvis.actions.apps import AppManager
 from jarvis.actions.system import SystemManager
 from jarvis.comms.messaging import CommsManager
+from jarvis.memory import memory_service
 
-SYSTEM_PROMPT = """
+SYSTEM_PROMPT_TEMPLATE = """
 You are Project Esraa (inspired by JARVIS / F.R.I.D.A.Y.), a loyal, hyper-competent, witty, and highly capable AI assistant with an intelligent British female persona.
 You serve your creator with utmost efficiency, concise precision, and subtle charm.
+You have persistent memory: you remember conversations and can learn new facts about the user.
 
-You have direct access to tools on the user's computer:
+Learned Knowledge & Context about User:
+{learned_context}
+
+You have direct access to desktop tools:
 1. open_tab(url): Open a specific URL in browser
 2. search_web(query, engine): Search google, youtube, or wikipedia
 3. play_youtube(query): Search and play YouTube video / music
@@ -21,24 +26,19 @@ You have direct access to tools on the user's computer:
 5. play_media(media_path): Play a local movie or media file
 6. get_system_status(): Check CPU, RAM, disk, and time
 7. set_volume(percent): Change volume (0-100)
-8. send_email(to_email, subject, body): Send an email
-9. send_telegram(text): Send a telegram message
+8. remember_fact(topic, content): Store a fact or preference you learned about the user
+9. send_email(to_email, subject, body): Send an email
+10. send_telegram(text): Send a telegram message
 
-When the user asks you to perform an action, you should formulate a response and execute tool calls.
-Format tool calls in your response as JSON blocks inside ```tool_call ... ``` like:
+When the user asks you to perform an action, format tool calls in your response as JSON blocks inside ```tool_call ... ``` like:
 ```tool_call
-{"tool": "open_tab", "args": {"url": "https://netflix.com"}}
+{{"tool": "open_tab", "args": {{"url": "https://netflix.com"}}}}
 ```
-Or for queries:
-```tool_call
-{"tool": "search_web", "args": {"query": "Avengers Endgame full movie", "engine": "google"}}
-```
-You can call multiple tools or none if it's just conversation. Always maintain your persona: polite, articulate, sharp, and always ready to assist.
+Always maintain your British female AI persona: polite, articulate, sharp, and attentive.
 """
 
 class BrainEngine:
     def __init__(self):
-        self.conversation_history = []
         self.gemini_key = GEMINI_API_KEY
         self.groq_key = GROQ_API_KEY
 
@@ -66,6 +66,9 @@ class BrainEngine:
                 res = SystemManager.get_system_status()
             elif tool_name == "set_volume":
                 res = SystemManager.set_volume(int(args.get("percent", 50)))
+            elif tool_name == "remember_fact":
+                memory_service.remember_fact(args.get("topic", "general"), args.get("content", ""))
+                res = {"status": "success", "message": f"Learned fact about {args.get('topic')}"}
             elif tool_name == "send_email":
                 res = CommsManager.send_email(args.get("to_email"), args.get("subject"), args.get("body"))
             elif tool_name == "send_telegram":
@@ -77,34 +80,51 @@ class BrainEngine:
             return json.dumps({"status": "error", "message": str(e)})
 
     async def think(self, user_message: str) -> Dict[str, Any]:
-        """Main LLM reasoning loop with fallback mechanisms."""
+        """Main LLM reasoning loop with fallback mechanisms and persistent memory."""
         self.reload_keys()
 
-        # Fallback quick regex rules if no API key is provided yet
-        if not self.gemini_key and not self.groq_key:
-            return await self._offline_smart_fallback(user_message)
+        # Save user query to persistent memory
+        memory_service.save_message("user", user_message)
 
-        # 1. Attempt Gemini 2.0 Flash (Free on Google AI Studio)
+        # Build context from learned facts
+        facts = memory_service.get_all_facts()
+        facts_str = "\n".join([f"- {k}: {v}" for k, v in facts.items()]) or "No specific custom facts recorded yet."
+        prompt = SYSTEM_PROMPT_TEMPLATE.format(learned_context=facts_str)
+
+        output = None
+        # 1. Attempt Gemini (Free on Google AI Studio)
         if self.gemini_key:
             try:
-                return await self._call_gemini(user_message)
+                output = await self._call_gemini(user_message, prompt)
             except Exception as e:
                 print(f"[Brain] Gemini error: {e}")
 
-        # 2. Attempt Groq (Free tier)
-        if self.groq_key:
+        # 2. Attempt Groq fallback
+        if not output and self.groq_key:
             try:
-                return await self._call_groq(user_message)
+                output = await self._call_groq(user_message, prompt)
             except Exception as e:
                 print(f"[Brain] Groq error: {e}")
 
-        return await self._offline_smart_fallback(user_message)
+        # 3. Offline rule fallback
+        if not output:
+            output = await self._offline_smart_fallback(user_message)
 
-    async def _call_gemini(self, user_message: str) -> Dict[str, Any]:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self.gemini_key}"
+        # Save Esraa reply to memory
+        memory_service.save_message("esraa", output.get("speech_text", ""), output.get("tool_calls", []))
+        return output
+
+    async def _call_gemini(self, user_message: str, system_prompt: str) -> Dict[str, Any]:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={self.gemini_key}"
         
-        contents = [
-            {"role": "user", "parts": [{"text": SYSTEM_PROMPT + "\n\nUser: " + user_message}]}
+        recent = memory_service.get_recent_history(6)
+        formatted_history = []
+        for h in recent[:-1]:  # Exclude current message
+            role = "user" if h["sender"] == "user" else "model"
+            formatted_history.append({"role": role, "parts": [{"text": h["message"]}]})
+
+        contents = formatted_history + [
+            {"role": "user", "parts": [{"text": system_prompt + "\n\nUser: " + user_message}]}
         ]
         
         payload = {
@@ -121,13 +141,13 @@ class BrainEngine:
                 else:
                     raise Exception(f"Gemini API returned error: {data}")
 
-    async def _call_groq(self, user_message: str) -> Dict[str, Any]:
+    async def _call_groq(self, user_message: str, system_prompt: str) -> Dict[str, Any]:
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {"Authorization": f"Bearer {self.groq_key}"}
         payload = {
             "model": "llama-3.3-70b-versatile",
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
             ],
             "temperature": 0.7
@@ -142,7 +162,6 @@ class BrainEngine:
                     raise Exception(f"Groq API returned error: {data}")
 
     async def _process_tool_calls_in_text(self, reply_text: str) -> Dict[str, Any]:
-        # Extract tool calls
         pattern = r"```tool_call\s*(.*?)\s*```"
         matches = re.findall(pattern, reply_text, re.DOTALL)
         
@@ -155,7 +174,6 @@ class BrainEngine:
             except Exception as e:
                 tool_results.append({"error": str(e)})
 
-        # Clean speech text from tool block for TTS
         clean_text = re.sub(pattern, "", reply_text).strip()
         return {
             "speech_text": clean_text,
@@ -164,7 +182,6 @@ class BrainEngine:
         }
 
     async def _offline_smart_fallback(self, user_message: str) -> Dict[str, Any]:
-        """Provides instant offline responses for basic controls when no API key is yet configured."""
         msg = user_message.lower().strip()
         
         if "movie" in msg or "watch" in msg or "youtube" in msg:
@@ -190,7 +207,7 @@ class BrainEngine:
             }
 
         return {
-            "speech_text": "Online and standing by. Configure your free Gemini or Groq API key in the settings panel to enable my full neural intellect.",
+            "speech_text": "Online and standing by. I am listening.",
             "tool_calls": []
         }
 
