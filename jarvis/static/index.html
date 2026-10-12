@@ -535,45 +535,39 @@
     const audioPlayer = document.getElementById('audio-player');
     const micBtn = document.getElementById('mic-btn');
 
-    // Speech recognition setup (browser native Web Speech API - free & instant)
-    let recognition;
-    let isListening = false;
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-      recognition = new SpeechRec();
-      recognition.continuous = false;
-      recognition.interimResults = false;
+    let isRecording = false;
 
-      recognition.onstart = () => {
-        isListening = true;
-        micBtn.classList.add('recording');
-        voiceStatus.innerText = "Listening...";
-        reactor.classList.add('active');
-      };
+    async function toggleSpeechRecognition() {
+      if (isRecording) return;
+      isRecording = true;
+      micBtn.classList.add('recording');
+      voiceStatus.innerText = "Listening (Hardware Mic)...";
+      reactor.classList.add('active');
 
-      recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        userInput.value = transcript;
-        sendMessage();
-      };
-
-      recognition.onend = () => {
-        isListening = false;
-        micBtn.classList.remove('recording');
-        voiceStatus.innerText = "Awaiting Directive";
+      try {
+        const resp = await fetch('/api/record', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ duration: 4 })
+        });
+        const data = await resp.json();
+        
+        if (data.status === 'success' && data.text && data.text.trim()) {
+          userInput.value = data.text;
+          sendMessage(data.text);
+        } else {
+          voiceStatus.innerText = "No Speech Detected";
+          reactor.classList.remove('active');
+          setTimeout(() => voiceStatus.innerText = "Awaiting Directive", 2000);
+        }
+      } catch (err) {
+        console.error("Mic error:", err);
+        voiceStatus.innerText = "Mic Error";
         reactor.classList.remove('active');
-      };
-    }
-
-    function toggleSpeechRecognition() {
-      if (!recognition) {
-        alert("Speech Recognition is not supported in this browser. You can type commands directly.");
-        return;
-      }
-      if (isListening) {
-        recognition.stop();
-      } else {
-        recognition.start();
+        setTimeout(() => voiceStatus.innerText = "Awaiting Directive", 2000);
+      } finally {
+        isRecording = false;
+        micBtn.classList.remove('recording');
       }
     }
 

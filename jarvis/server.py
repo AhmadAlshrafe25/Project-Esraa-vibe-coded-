@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from config.settings import STATIC_DIR, CACHE_DIR
 from jarvis.brain.engine import brain_service
 from jarvis.voice.tts import voice_service
+from jarvis.voice.stt import stt_engine
 from jarvis.actions.system import SystemManager
 
 app = FastAPI(title="Project Esraa AI Assistant")
@@ -17,6 +18,19 @@ app.mount("/cache", StaticFiles(directory=str(CACHE_DIR)), name="cache")
 
 class CommandRequest(BaseModel):
     command: str
+
+class RecordRequest(BaseModel):
+    duration: int = 4
+
+@app.post("/api/record")
+async def record_microphone(req: RecordRequest = RecordRequest()):
+    """Records directly from the hardware microphone and transcribes using free STT."""
+    try:
+        audio_file = stt_engine.record_mic_audio(duration_sec=req.duration)
+        transcription = stt_engine.transcribe_audio_file(audio_file)
+        return {"status": "success", "text": transcription}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "text": ""}
 
 class SettingsRequest(BaseModel):
     gemini_key: str = ""
