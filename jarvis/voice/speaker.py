@@ -83,7 +83,7 @@ class SmoothSpeaker:
             )
             print_thread.start()
 
-        # 2. Setup non-blocking keyboard listener
+        # 2. Setup non-blocking keyboard listener (instant cut-off on Enter / Space / any key)
         fd = None
         old_settings = None
         if sys.stdin.isatty():
@@ -96,32 +96,9 @@ class SmoothSpeaker:
             except Exception:
                 fd = None
 
-        # 3. Setup microphone barge-in process
-        mic_proc = None
-        try:
-            if shutil.which("parec"):
-                mic_proc = subprocess.Popen(
-                    ["parec", "--rate=16000", "--channels=1", "--format=s16le", "--raw"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL
-                )
-            else:
-                mic_proc = subprocess.Popen(
-                    ["arecord", "-D", "default", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw", "-q"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL
-                )
-        except Exception:
-            mic_proc = None
-
-        calibration = []
-        baseline_bleed = 1000.0
-        consecutive_voice_chunks = 0
-        start_time = time.time()
-
         try:
             while pygame.mixer.music.get_busy() and not self.is_interrupted:
-                # A. Check Keyboard Tap (instant cut-off on Enter / Space / any key)
+                # Check Keyboard Tap (instant cut-off on Enter / Space / Esc / any key)
                 if fd is not None:
                     r, _, _ = select.select([sys.stdin], [], [], 0)
                     if r:
@@ -130,38 +107,7 @@ class SmoothSpeaker:
                         print("\r\033[K\033[1;33m[⚡ CUT OFF by keypress — Ezra stopped talking]\033[0m\n")
                         break
 
-                # B. Check Microphone Voice Interruption
-                if mic_proc and mic_proc.stdout:
-                    try:
-                        chunk = mic_proc.stdout.read(2560)
-                        if chunk and len(chunk) >= 2:
-                            count = len(chunk) // 2
-                            samples = struct.unpack(f"<{count}h", chunk[:count * 2])
-                            rms = math.sqrt(sum(s * s for s in samples) / count)
-
-                            elapsed = time.time() - start_time
-                            if elapsed < 0.25:
-                                calibration.append(rms)
-                                if len(calibration) >= 3:
-                                    baseline_bleed = sum(calibration) / len(calibration)
-                            else:
-                                if baseline_bleed < 2500:
-                                    voice_threshold = max(baseline_bleed * 1.8, 5500.0)
-                                else:
-                                    voice_threshold = max(baseline_bleed * 1.5, 28000.0)
-
-                                if rms > voice_threshold:
-                                    consecutive_voice_chunks += 1
-                                    if consecutive_voice_chunks >= 2:  # ~160ms of continuous human voice
-                                        self.stop()
-                                        print("\r\033[K\033[1;33m[⚡ CUT OFF by your voice — Listening to you!]\033[0m\n")
-                                        break
-                                else:
-                                    consecutive_voice_chunks = 0
-                    except Exception:
-                        pass
-
-                time.sleep(0.015)
+                time.sleep(0.02)
 
         finally:
             # Restore terminal attributes cleanly
@@ -171,14 +117,6 @@ class SmoothSpeaker:
                     termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
                 except Exception:
                     pass
-
-            # Terminate mic process cleanly
-            if mic_proc:
-                mic_proc.terminate()
-                try:
-                    mic_proc.wait(timeout=0.2)
-                except Exception:
-                    mic_proc.kill()
 
         was_interrupted = self.is_interrupted
         self.is_speaking = False
