@@ -6,6 +6,7 @@ from jarvis.brain.engine import brain_service
 from jarvis.voice.speaker import voice_speaker
 from jarvis.voice.stt import stt_engine
 from jarvis.memory import memory_service
+from jarvis.ui.visuals import visualizer
 
 BANNER = """\033[1;36m
   ╔═══════════════════════════════════════════════════════════════╗
@@ -15,23 +16,28 @@ BANNER = """\033[1;36m
 
 def print_banner():
     print(BANNER)
-    print("\033[1;32m[+] Engine:\033[0m Gemini 3.5 Flash (Optimized for speed & minimal resource usage)")
-    print("\033[1;32m[+] Voice:\033[0m Fast Crisp British Female (Zero-lag)")
+    print("\033[1;32m[+] Engine:\033[0m Gemini 3.5 Flash (Adaptive Learning Enabled)")
+    print("\033[1;32m[+] Voice:\033[0m Silky Smooth Neural Voice (Sonia & Jenny)")
     print("\033[1;33m[!] Press ENTER once to activate Continuous Conversation Mode!\033[0m")
     print("\033[1;33m[!] Speak naturally back and forth. Say 'stop', 'bye', or press Ctrl+C to pause.\033[0m")
     print("-" * 65 + "\n")
 
 async def handle_turn(text: str) -> bool:
-    """Processes a user turn. Returns False if user requested to exit/pause."""
+    """Processes a user turn with animated brain sphere and typewriter speech output."""
     clean = text.lower().strip()
     if clean in ("stop", "pause", "exit", "quit", "goodbye", "bye", "cancel"):
         farewell = "Understood. Pausing conversation loop, sir."
-        print(f"\n\033[1;36m[Ezra]:\033[0m {farewell}\n")
+        visualizer.moving_print(farewell, prefix="\n\033[1;36m[Ezra]:\033[0m ")
         voice_speaker.speak(farewell)
         return False
 
-    print(f"\n\033[1;34m[You]:\033[0m {text}")
+    print(f"\n\033[1;34m[You]:\033[0m {text}\n")
+    
+    # Start animated brain with glowing yellow sphere
+    visualizer.start_agent_brain("Ezra Neural Core")
     response = await brain_service.think(text)
+    visualizer.stop_agent_brain()
+
     reply_speech = response.get("speech_text", "")
     tools = response.get("tool_calls", [])
 
@@ -40,7 +46,8 @@ async def handle_turn(text: str) -> bool:
             if "tool" in t:
                 print(f"\033[1;33m[Action Executed]:\033[0m {t['tool']}")
 
-    print(f"\033[1;36m[Ezra]:\033[0m {reply_speech}")
+    # Moving typewriter print
+    visualizer.moving_print(reply_speech, prefix="\033[1;36m[Ezra]:\033[0m ", delay=0.015)
     voice_speaker.speak(reply_speech)
     return True
 
@@ -84,7 +91,7 @@ def continuous_conversation_loop():
 def main():
     print_banner()
     initial_greet = "Systems operational, sir. How can I assist you today?"
-    print(f"\033[1;36m[Ezra]:\033[0m {initial_greet}\n")
+    visualizer.moving_print(initial_greet, prefix="\033[1;36m[Ezra]:\033[0m ")
     voice_speaker.speak(initial_greet)
 
     while True:

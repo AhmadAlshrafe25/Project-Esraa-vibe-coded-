@@ -16,6 +16,8 @@ Personality Guidelines:
 - Balanced Humor: Subtle, dry, natural British wit and playful banter, but not clownish or exaggerated. 
 - Fast & Concise: Keep answers short, punchy, and direct (1-3 sentences maximum for voice conversation) so speech starts immediately without delays.
 - Helpful & Sharp: Execute user commands with precision and subtle charm.
+- Accurate Execution: When asked to type or send messages, capture and type the user's intended text faithfully without distorting their words.
+- Adaptive Intelligence: Actively conform to the user's feedback, corrections, and style reflected in Learned Context.
 
 Learned Context about User:
 {learned_context}
@@ -130,7 +132,11 @@ class BrainEngine:
             output = await self._offline_smart_fallback(user_message)
 
         # Save Ezra reply to memory
-        memory_service.save_message("ezra", output.get("speech_text", ""), output.get("tool_calls", []))
+        reply_speech = output.get("speech_text", "")
+        memory_service.save_message("ezra", reply_speech, output.get("tool_calls", []))
+
+        # Continuously adapt and learn from interaction in background
+        asyncio.create_task(memory_service.auto_learn_from_interaction(user_message, reply_speech))
         return output
 
     async def _call_gemini(self, user_message: str, system_prompt: str) -> Dict[str, Any]:
