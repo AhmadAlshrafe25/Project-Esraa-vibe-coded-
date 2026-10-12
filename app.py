@@ -24,7 +24,7 @@ def print_banner():
     print(f"\033[1;32m[+] Voice Gate:\033[0m {gate_status}")
     print("\033[1;32m[+] Memory:\033[0m Google Drive Two-Way Synchronizer Active")
     print("\033[1;33m[!] Press ENTER once to activate Hands-Free Conversation!\033[0m")
-    print("\033[1;33m[!] Barge-In Enabled: Speak or tap ENTER/SPACE to cut Ezra off at any time!\033[0m")
+    print("\033[1;33m[!] Tap ENTER or SPACE to interrupt Ezra at any time!\033[0m")
     print("\033[1;33m[!] Commands: /enroll (calibrate voice), /voicegate, /threshold <num>, /mute, /unmute.\033[0m")
     print("-" * 65 + "\n")
 
@@ -87,7 +87,7 @@ def run_voice_enrollment():
 
 def continuous_conversation_loop():
     """Continuous conversation loop: dynamically listens until you finish speaking, replies, and immediately resumes listening!"""
-    print("\n\033[1;32m[⚡ CONTINUOUS CONVERSATION ACTIVE]\033[0m Speak freely! Tap ENTER/SPACE or speak to cut Ezra off anytime.\n")
+    print("\n\033[1;32m[⚡ CONTINUOUS CONVERSATION ACTIVE]\033[0m Speak freely! Tap ENTER or SPACE to cut Ezra off anytime.\n")
     
     silence_count = 0
     while True:

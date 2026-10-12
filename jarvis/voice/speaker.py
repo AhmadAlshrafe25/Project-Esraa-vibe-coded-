@@ -57,7 +57,7 @@ class SmoothSpeaker:
             pass
 
     def _play_file_with_interrupt(self, audio_path: str, text: str = "", prefix: str = "", live_print: bool = True) -> bool:
-        """Plays audio file with active full-duplex barge-in monitoring (keyboard tap or microphone speech).
+        """Plays audio file with deliberate keyboard barge-in monitoring (Enter / Space / Esc).
         Returns True if completed naturally, False if interrupted by user.
         """
         self.is_speaking = True
@@ -83,7 +83,7 @@ class SmoothSpeaker:
             )
             print_thread.start()
 
-        # 2. Setup non-blocking keyboard listener (instant cut-off on Enter / Space / any key)
+        # 2. Setup non-blocking keyboard listener with flushed buffer
         fd = None
         old_settings = None
         if sys.stdin.isatty():
@@ -93,19 +93,21 @@ class SmoothSpeaker:
                 fd = sys.stdin.fileno()
                 old_settings = termios.tcgetattr(fd)
                 tty.setcbreak(fd)
+                termios.tcflush(fd, termios.TCIFLUSH)  # Discard any stale Enter/keypresses from prompt
             except Exception:
                 fd = None
 
         try:
             while pygame.mixer.music.get_busy() and not self.is_interrupted:
-                # Check Keyboard Tap (instant cut-off on Enter / Space / Esc / any key)
+                # Check deliberate keyboard tap (Enter, Space, Esc, Q)
                 if fd is not None:
                     r, _, _ = select.select([sys.stdin], [], [], 0)
                     if r:
-                        sys.stdin.read(1)
-                        self.stop()
-                        print("\r\033[K\033[1;33m[⚡ CUT OFF by keypress — Ezra stopped talking]\033[0m\n")
-                        break
+                        ch = sys.stdin.read(1)
+                        if ch in ('\n', '\r', ' ', '\x1b', 'q', 'Q'):
+                            self.stop()
+                            print("\r\033[K\033[1;33m[⚡ Stopped by keypress]\033[0m\n")
+                            break
 
                 time.sleep(0.02)
 
