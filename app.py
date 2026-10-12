@@ -21,17 +21,17 @@ def print_banner():
     print(f"\033[1;32m[+] Voice:\033[0m {voice_status}")
     print("\033[1;32m[+] Memory:\033[0m Google Drive Two-Way Synchronizer Active")
     print("\033[1;33m[!] Press ENTER once to activate Hands-Free Conversation!\033[0m")
+    print("\033[1;33m[!] Barge-In Enabled: Speak or tap ENTER/SPACE to cut Ezra off at any time!\033[0m")
     print("\033[1;33m[!] Commands: Type directly, or use /mute, /unmute, or speak 'be quiet' / 'talk to me'.\033[0m")
     print("-" * 65 + "\n")
 
-async def handle_turn(text: str) -> bool:
-    """Processes a user turn with animated brain sphere and typewriter speech output."""
+async def handle_turn(text: str) -> dict:
+    """Processes a user turn with animated brain sphere and synchronized typewriter speech with full barge-in cut-out."""
     clean = text.lower().strip()
     if clean in ("stop", "pause", "exit", "quit", "goodbye", "bye", "cancel"):
         farewell = "Understood. Pausing conversation loop, sir."
-        visualizer.moving_print(farewell, prefix="\n\033[1;36m[Ezra]:\033[0m ")
-        voice_speaker.speak(farewell)
-        return False
+        voice_speaker.speak(farewell, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
+        return {"should_continue": False, "was_interrupted": False}
 
     print(f"\n\033[1;34m[You]:\033[0m {text}\n")
     
@@ -48,15 +48,14 @@ async def handle_turn(text: str) -> bool:
             if "tool" in t:
                 print(f"\033[1;33m[Action Executed]:\033[0m {t['tool']}")
 
-    # Moving typewriter print
+    # Synchronized speech & live typewriter with instant interruption (barge-in)
     prefix = "\033[1;35m[Ezra (Silent)]:\033[0m " if voice_speaker.is_muted else "\033[1;36m[Ezra]:\033[0m "
-    visualizer.moving_print(reply_speech, prefix=prefix, delay=0.015)
-    voice_speaker.speak(reply_speech)
-    return True
+    completed = voice_speaker.speak(reply_speech, prefix=prefix, live_print=True)
+    return {"should_continue": True, "was_interrupted": not completed}
 
 def continuous_conversation_loop():
     """Continuous conversation loop: dynamically listens until you finish speaking, replies, and immediately resumes listening!"""
-    print("\n\033[1;32m[⚡ CONTINUOUS CONVERSATION ACTIVE]\033[0m Speak freely! (Say 'stop', 'bye', or press Ctrl+C to pause)\n")
+    print("\n\033[1;32m[⚡ CONTINUOUS CONVERSATION ACTIVE]\033[0m Speak freely! Tap ENTER/SPACE or speak to cut Ezra off anytime.\n")
     
     silence_count = 0
     while True:
@@ -78,11 +77,16 @@ def continuous_conversation_loop():
             if not transcription or not transcription.strip():
                 continue
 
-            should_continue = asyncio.run(handle_turn(transcription))
+            turn_res = asyncio.run(handle_turn(transcription))
+            should_continue = turn_res.get("should_continue", True) if isinstance(turn_res, dict) else turn_res
             if not should_continue:
                 break
 
-            time.sleep(0.2)
+            # If user cut Ezra off to speak, immediately record next speech without delay
+            if isinstance(turn_res, dict) and turn_res.get("was_interrupted"):
+                time.sleep(0.05)
+            else:
+                time.sleep(0.2)
 
         except KeyboardInterrupt:
             print("\n\033[1;33m[Conversation paused. Press ENTER to resume.]\033[0m\n")
@@ -99,8 +103,7 @@ def main():
     print_banner()
     initial_greet = "Systems operational, sir. How can I assist you today?"
     prefix = "\033[1;35m[Ezra (Silent)]:\033[0m " if voice_speaker.is_muted else "\033[1;36m[Ezra]:\033[0m "
-    visualizer.moving_print(initial_greet, prefix=prefix)
-    voice_speaker.speak(initial_greet)
+    voice_speaker.speak(initial_greet, prefix=prefix, live_print=True)
 
     while True:
         try:

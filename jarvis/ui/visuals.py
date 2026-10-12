@@ -74,16 +74,19 @@ class BrainVisualizer:
             self._thread = None
 
     @staticmethod
-    def moving_print(text: str, prefix: str = "", delay: float = 0.012):
-        """Prints text smoothly like an active sci-fi interface typewriter."""
+    def moving_print(text: str, prefix: str = "", delay: float = 0.012, stop_check=None):
+        """Prints text smoothly like an active sci-fi interface typewriter, with instant cancellation support."""
         if prefix:
             sys.stdout.write(prefix)
             sys.stdout.flush()
         for char in text:
+            if stop_check and stop_check():
+                break
             sys.stdout.write(char)
             sys.stdout.flush()
             time.sleep(delay)
-        sys.stdout.write("\n")
-        sys.stdout.flush()
+        if not (stop_check and stop_check()):
+            sys.stdout.write("\n")
+            sys.stdout.flush()
 
 visualizer = BrainVisualizer()
