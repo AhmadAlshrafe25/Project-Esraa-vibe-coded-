@@ -40,7 +40,12 @@ class AppManager:
         if app_clean in FLATPAK_APPS:
             flatpak_id = FLATPAK_APPS[app_clean]
             try:
-                subprocess.Popen(["flatpak", "run", flatpak_id], start_new_session=True)
+                subprocess.Popen(
+                    ["flatpak", "run", flatpak_id],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True
+                )
                 return {"status": "success", "message": f"Launched {app_name} via Flatpak ({flatpak_id})."}
             except Exception as e:
                 return {"status": "error", "message": f"Failed to launch Flatpak {flatpak_id}: {e}"}
@@ -50,20 +55,30 @@ class AppManager:
         for binary in binary_candidates:
             if shutil.which(binary):
                 try:
-                    subprocess.Popen([binary], start_new_session=True)
+                    subprocess.Popen(
+                        [binary],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True
+                    )
                     return {"status": "success", "message": f"Launched {binary}."}
                 except Exception as e:
                     return {"status": "error", "message": f"Failed to launch {binary}: {e}"}
 
         # 3. Try gtk-launch
         if shutil.which("gtk-launch"):
-            res = subprocess.run(["gtk-launch", app_clean], capture_output=True)
+            res = subprocess.run(["gtk-launch", app_clean], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             if res.returncode == 0:
                 return {"status": "success", "message": f"Launched {app_name} via desktop entry."}
 
         # 4. Try generic xdg-open if user passed a file or path
         if os.path.exists(app_name):
-            subprocess.Popen(["xdg-open", app_name], start_new_session=True)
+            subprocess.Popen(
+                ["xdg-open", app_name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
             return {"status": "success", "message": f"Opened file {app_name} with default handler."}
 
         return {"status": "error", "message": f"Application '{app_name}' not found on system."}
