@@ -1,12 +1,14 @@
 import os
 import json
 import re
+import asyncio
 from typing import Dict, Any, List
 import aiohttp
 from config.settings import GEMINI_API_KEY, GROQ_API_KEY
 from jarvis.actions.browser import BrowserManager
 from jarvis.actions.apps import AppManager
 from jarvis.actions.system import SystemManager
+from jarvis.actions.vision import screen_vision
 from jarvis.comms.messaging import CommsManager
 from jarvis.memory import memory_service
 
@@ -23,21 +25,23 @@ Learned Context about User:
 {learned_context}
 
 You have direct access to desktop tools:
-1. open_tab(url): Open a specific URL in browser
-2. search_web(query, engine): Search google, youtube, or wikipedia
-3. play_youtube(query): Search and play YouTube video / music
-4. launch_app(app_name): Launch desktop applications (discord, brave, chrome, terminal, calculator, etc.)
-5. close_app(app_name): Close or terminate an application
-6. type_message(text, press_enter): Type out text into active window and optionally press Enter
-7. send_discord_message(message): Open Discord and type a message into chat
-8. take_screenshot(): Capture screen screenshot
-9. media_control(action): Control media (play, pause, play-pause, next, previous)
-10. get_system_status(): Check CPU, RAM, disk, battery, and time
-11. set_volume(percent): Change volume (0-100)
-12. remember_fact(topic, content): Store a fact or preference you learned about the user
-13. execute_shell_command(command): Run a safe terminal command on user request
-14. send_email(to_email, subject, body): Send an email
-15. send_telegram(text): Send a telegram message
+1. inspect_screen(instruction): Visually see the user's screen in real time with your multimodal vision eyes (describe what's open, read errors, inspect chat/code)
+2. click_screen_element(description): Visually find a UI button/field on screen and click it
+3. open_tab(url): Open a specific URL in browser
+4. search_web(query, engine): Search google, youtube, or wikipedia
+5. play_youtube(query): Search and play YouTube video / music
+6. launch_app(app_name): Launch desktop applications (discord, brave, chrome, terminal, calculator, etc.)
+7. close_app(app_name): Close or terminate an application
+8. type_message(text, press_enter): Type out text into active window and optionally press Enter
+9. send_discord_message(message): Open Discord and type a message into chat
+10. take_screenshot(): Capture screen screenshot
+11. media_control(action): Control media (play, pause, play-pause, next, previous)
+12. get_system_status(): Check CPU, RAM, disk, battery, and time
+13. set_volume(percent): Change volume (0-100)
+14. remember_fact(topic, content): Store a fact or preference you learned about the user
+15. execute_shell_command(command): Run a safe terminal command on user request
+16. send_email(to_email, subject, body): Send an email
+17. send_telegram(text): Send a telegram message
 
 When the user asks you to perform an action, format tool calls in your response as JSON blocks inside ```tool_call ... ``` like:
 ```tool_call
@@ -61,7 +65,12 @@ class BrainEngine:
     async def execute_tool(self, tool_name: str, args: Dict[str, Any]) -> str:
         """Executes system or desktop action."""
         try:
-            if tool_name == "open_tab":
+            if tool_name == "inspect_screen":
+                vision_analysis = screen_vision.analyze_screen(args.get("instruction", "Describe what is on screen"))
+                res = {"status": "success", "message": vision_analysis, "screen_vision": vision_analysis}
+            elif tool_name == "click_screen_element":
+                res = screen_vision.locate_and_click(args.get("description", ""))
+            elif tool_name == "open_tab":
                 res = BrowserManager.open_url(args.get("url", ""))
             elif tool_name == "search_web":
                 res = BrowserManager.search_web(args.get("query", ""), args.get("engine", "google"))
@@ -232,6 +241,13 @@ class BrainEngine:
             return {
                 "speech_text": f"Systems operational. CPU load is at {res['cpu_percent']}, and memory usage is {res['ram_used_gb']}.",
                 "tool_calls": [{"tool": "get_system_status", "result": res}]
+            }
+
+        if "screen" in msg or "look" in msg:
+            analysis = screen_vision.analyze_screen(user_message)
+            return {
+                "speech_text": analysis,
+                "tool_calls": [{"tool": "inspect_screen", "result": {"message": analysis}}]
             }
 
         if "open" in msg and ("google" in msg or "chrome" in msg or "tab" in msg):
