@@ -11,6 +11,7 @@ import subprocess
 from collections import deque
 from pathlib import Path
 import speech_recognition as sr
+import numpy as np
 from config.settings import CACHE_DIR, GEMINI_API_KEY
 
 NOISE_PHRASES = {
@@ -91,13 +92,13 @@ class NativeSpeechRecognizer:
             stderr=subprocess.DEVNULL
         )
 
-    def record_until_finished(self, max_wait_sec: float = 14.0, silence_threshold_sec: float = 0.6) -> str:
+    def record_until_finished(self, max_wait_sec: float = 8.0, silence_threshold_sec: float = 0.55) -> str:
         """
         Dynamically records only genuine human speech with real-time streaming Vosk recognition:
-        - Instant silence cut-off: defaults to 0.6s so Ezra responds near-instantly when user stops speaking.
+        - Instant silence cut-off: defaults to 0.55s so Ezra responds near-instantly when user stops speaking.
+        - Adaptive noise floor calibration: automatically normalizes to room acoustics and eliminates mic static/hiss.
         - Streams incoming audio directly to Vosk Kaldi recognizer in memory.
-        - Rejects random clicks, keyboard taps, fan noise, and breathing.
-        - Discards sub-second noise spikes so Ezra is never confused by room artifacts.
+        - Maximum speech safety cutoff: caps continuous speech at 6.0s to prevent ever getting stuck!
         """
         self._ensure_mic_volume()
         self.last_streaming_transcription = ""
@@ -119,8 +120,24 @@ class NativeSpeechRecognizer:
         except Exception as e:
             raise RuntimeError(f"Microphone recording failed: {e}")
 
-        # 800ms rolling pre-speech ring buffer
-        pre_buffer_size = int(0.8 / self.chunk_duration)
+        # 1. Warm-up & Calibration: Discard stream initialization surge and settle baseline
+        calib_rms = []
+        for _ in range(10):
+            init_chunk = proc.stdout.read(self.chunk_size)
+            if not init_chunk:
+                break
+            rms_val = self._calculate_rms(init_chunk)
+            if 1000.0 < rms_val < 20000.0:
+                calib_rms.append(rms_val)
+                if len(calib_rms) >= 3:
+                    break
+
+        ambient_baseline = float(np.median(calib_rms)) if calib_rms else 7500.0
+        if ambient_baseline < 1000.0:
+            ambient_baseline = 7500.0
+
+        # 640ms rolling pre-speech ring buffer
+        pre_buffer_size = int(0.64 / self.chunk_duration)
         pre_buffer = deque(maxlen=pre_buffer_size)
 
         recorded_frames = []
@@ -130,9 +147,9 @@ class NativeSpeechRecognizer:
         silence_chunks = 0
         max_silence_chunks = max(3, int(silence_threshold_sec / self.chunk_duration))
 
-        ambient_baseline = 400.0
         start_time = time.time()
-        max_total_sec = 45.0
+        speech_start_time = 0.0
+        max_speech_sec = 6.0  # Hard ceiling: voice commands should never record longer than 6 seconds!
 
         try:
             while True:
@@ -142,15 +159,23 @@ class NativeSpeechRecognizer:
 
                 rms = self._calculate_rms(chunk)
 
-                # Track ambient baseline only on quiet chunks
-                if rms < 800.0:
-                    ambient_baseline = 0.95 * ambient_baseline + 0.05 * rms
+                # Skip clipping spikes (>32000) from noise floor tracking
+                if rms < 32000.0:
+                    if not is_speaking:
+                        # Smooth continuous tracking of ambient room noise
+                        ambient_baseline = 0.88 * ambient_baseline + 0.12 * rms
+                    else:
+                        # While speaking, noise floor only drifts if lower energy is observed
+                        if rms < ambient_baseline:
+                            ambient_baseline = 0.85 * ambient_baseline + 0.15 * rms
 
-                # Strict speech threshold (rejects room hum, keyboard taps, and breaths)
-                speech_threshold = max(ambient_baseline * 2.0, 1600.0)
+                # Dynamic speech threshold: requires voice energy clearly above ambient floor
+                speech_threshold = max(ambient_baseline * 1.45, ambient_baseline + 3500.0)
 
-                # Audio level meter
-                level = min(10, int(rms / (speech_threshold * 1.5) * 10))
+                # Accurate dynamic audio level meter
+                excess = max(0.0, rms - ambient_baseline)
+                scale_span = max(speech_threshold - ambient_baseline, 3500.0)
+                level = min(10, max(0, int((excess / scale_span) * 10)))
                 meter_bar = "█" * level + "░" * (10 - level)
 
                 if rms > speech_threshold:
@@ -159,6 +184,7 @@ class NativeSpeechRecognizer:
                     # Debounce: Require at least 2 consecutive chunks (160ms) of human vocal energy
                     if consecutive_voice_chunks >= 2 and not is_speaking:
                         is_speaking = True
+                        speech_start_time = time.time()
                         buffered_list = list(pre_buffer)
                         recorded_frames.extend(buffered_list)
                         if vosk_rec:
@@ -171,7 +197,13 @@ class NativeSpeechRecognizer:
                         speech_chunks_count += 1
                         silence_chunks = 0
                         if vosk_rec:
-                            vosk_rec.AcceptWaveform(chunk)
+                            if vosk_rec.AcceptWaveform(chunk):
+                                # Kaldi acoustic model detected end of spoken sentence!
+                                break
+
+                        # Hard ceiling: if user has spoken for 6 seconds, cut off and process immediately!
+                        if time.time() - speech_start_time > max_speech_sec:
+                            break
                 else:
                     consecutive_voice_chunks = 0
                     if is_speaking:
@@ -189,7 +221,8 @@ class NativeSpeechRecognizer:
                         if time.time() - start_time > max_wait_sec:
                             break
 
-                if time.time() - start_time > max_total_sec:
+                # Global safety fallback
+                if time.time() - start_time > 12.0:
                     break
 
         finally:
