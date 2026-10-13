@@ -4,7 +4,15 @@ import time
 import subprocess
 from pathlib import Path
 from PIL import Image
-import pyautogui
+
+if "DISPLAY" not in os.environ and "WAYLAND_DISPLAY" not in os.environ:
+    os.environ["DISPLAY"] = ":0"
+
+try:
+    import pyautogui
+except Exception:
+    pyautogui = None
+
 from config.settings import CACHE_DIR, GEMINI_API_KEY
 
 class ScreenVision:

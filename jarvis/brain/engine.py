@@ -13,6 +13,9 @@ from jarvis.actions.apis import api_manager
 from jarvis.voice.speaker import voice_speaker
 from jarvis.comms.messaging import CommsManager
 from jarvis.memory import memory_service
+from config.settings import PROJECT_ROOT
+
+SOUL_FILE = PROJECT_ROOT / "SOUL.md"
 
 SYSTEM_PROMPT_TEMPLATE = """You are Ezra, an ultra-fast, loyal, witty British AI assistant (inspired by JARVIS).
 Rules:
@@ -30,6 +33,28 @@ Format any tool calls as:
 ```tool_call
 {{"tool": "tool_name", "args": {{...}}}}
 ```"""
+
+def get_system_prompt(learned_context: str) -> str:
+    """Loads system instructions from SOUL.md with dynamic context injection."""
+    if SOUL_FILE.exists():
+        try:
+            soul_text = SOUL_FILE.read_text(encoding="utf-8").strip()
+            tools_spec = (
+                "\n\nTools available:\n"
+                "inspect_screen, click_screen_element, type_message, dictate_text, press_key, press_hotkey, "
+                "toggle_voice, get_weather, get_crypto_price, get_exchange_rate, search_wikipedia, get_network_info, "
+                "get_tech_news, get_github_info, open_tab, search_web, play_youtube, launch_app, close_app, "
+                "send_discord_message, take_screenshot, media_control, get_system_status, set_volume, remember_fact, "
+                "execute_shell_command, send_email, send_telegram.\n\n"
+                "Format any tool calls strictly as:\n"
+                "```tool_call\n"
+                '{"tool": "tool_name", "args": {...}}\n'
+                "```"
+            )
+            return f"{soul_text}\n\nLearned User Context:\n{learned_context}{tools_spec}"
+        except Exception:
+            pass
+    return SYSTEM_PROMPT_TEMPLATE.format(learned_context=learned_context)
 
 class BrainEngine:
     def __init__(self):
@@ -222,7 +247,7 @@ class BrainEngine:
         # Build context from learned facts
         facts = memory_service.get_all_facts()
         facts_str = "\n".join([f"- {k}: {v}" for k, v in facts.items()]) or "No specific custom facts recorded yet."
-        prompt = SYSTEM_PROMPT_TEMPLATE.format(learned_context=facts_str)
+        prompt = get_system_prompt(learned_context=facts_str)
 
         output = None
         # 1. Attempt Gemini (Free on Google AI Studio)
@@ -252,7 +277,7 @@ class BrainEngine:
         return output
 
     async def _call_gemini(self, user_message: str, system_prompt: str) -> Dict[str, Any]:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={self.gemini_key}"
+        candidate_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.0-flash-lite"]
         
         recent = memory_service.get_recent_history(6)
         formatted_history = []
@@ -270,13 +295,20 @@ class BrainEngine:
         }
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload) as resp:
-                data = await resp.json()
-                if "candidates" in data:
-                    reply_text = data["candidates"][0]["content"]["parts"][0]["text"]
-                    return await self._process_tool_calls_in_text(reply_text, user_context=user_message)
-                else:
-                    raise Exception(f"Gemini API returned error: {data}")
+            for model_name in candidate_models:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.gemini_key}"
+                try:
+                    async with session.post(url, json=payload) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if "candidates" in data and data["candidates"]:
+                                reply_text = data["candidates"][0]["content"]["parts"][0]["text"]
+                                return await self._process_tool_calls_in_text(reply_text, user_context=user_message)
+                        elif resp.status in (404, 400):
+                            continue  # Try next model in candidate list
+                except Exception:
+                    continue
+        raise Exception("All Gemini candidate models failed to respond.")
 
     async def _call_groq(self, user_message: str, system_prompt: str) -> Dict[str, Any]:
         url = "https://api.groq.com/openai/v1/chat/completions"
@@ -348,6 +380,18 @@ class BrainEngine:
                 clean_text = f"{clean_text} {tool_speech}"
         elif not clean_text and tool_results:
             clean_text = f"Directive for {tool_results[0].get('tool', 'command')} completed, sir."
+
+        # SPEECH GATE PROTOCOL:
+        # Prevent claiming an action succeeded if the tool failed or threw an error.
+        if tool_results:
+            first_tool = tool_results[0].get("tool", "")
+            first_res = tool_results[0].get("result", {})
+            first_err = tool_results[0].get("error", "")
+            
+            is_error = bool(first_err) or (isinstance(first_res, dict) and first_res.get("status") == "error")
+            if is_error:
+                err_detail = first_err or (first_res.get("message") if isinstance(first_res, dict) else "execution failed")
+                clean_text = f"Action for {first_tool} could not be completed, sir. Reason: {err_detail}."
 
         return {
             "speech_text": clean_text,

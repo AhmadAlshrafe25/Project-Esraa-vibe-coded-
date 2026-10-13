@@ -26,8 +26,14 @@ def print_banner():
 async def handle_turn(text: str) -> dict:
     """Processes a user turn: think → speak. Clean conversational flow, no animations."""
     clean = text.lower().strip()
-    if clean in ("stop listening", "exit conversation", "quit conversation", "goodbye ezra", "bye ezra", "sleep ezra", "shut down", "go to sleep"):
-        farewell = "Understood. Pausing hands-free mode, sir. Press ENTER anytime to resume."
+    is_sleep_command = (
+        clean in ("stop listening", "exit conversation", "quit conversation", "goodbye ezra", "bye ezra", "sleep ezra", "shut down", "go to sleep", "sleep", "be quiet")
+        or any(w in clean for w in ("اسكت", "نام", "توقف", "مع السلامة", "اخرس"))
+    )
+    if is_sleep_command:
+        import re
+        has_arabic = bool(re.search(r"[\u0600-\u06FF]", clean))
+        farewell = "حاضر يا سيدي، في وضع الاستعداد دائماً. اضغط ENTER للاستئناف." if has_arabic else "Understood. Pausing hands-free mode, sir. Press ENTER anytime to resume."
         voice_speaker.speak(farewell, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
         return {"should_continue": False, "was_interrupted": False}
 

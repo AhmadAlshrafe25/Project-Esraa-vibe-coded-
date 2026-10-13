@@ -19,15 +19,15 @@ import pygame
 from pathlib import Path
 from config.settings import CACHE_DIR
 
-# Initialize lightweight audio mixer
+# Initialize audio mixer with robust native fallback (ffplay / pw-play)
+HAS_PYGAME_MIXER = False
 try:
+    import pygame.mixer
     pygame.mixer.pre_init(24000, -16, 2, 512)
     pygame.mixer.init()
+    HAS_PYGAME_MIXER = True
 except Exception:
-    try:
-        pygame.mixer.init()
-    except Exception as e:
-        print(f"[Mixer Init] {e}")
+    HAS_PYGAME_MIXER = False
 
 class SmoothSpeaker:
     """Delivers silky smooth, natural human neural voice with instant responsiveness and zero robotic fallbacks."""
@@ -38,6 +38,7 @@ class SmoothSpeaker:
         self.is_muted: bool = False
         self.is_speaking: bool = False
         self.is_interrupted: bool = False
+        self._active_proc = None
 
     def set_muted(self, muted: bool):
         """Sets mute state. When True, Ezra outputs purely text without speaking aloud."""
@@ -52,10 +53,17 @@ class SmoothSpeaker:
         """Immediately cuts off and silences Ezra's speech output."""
         self.is_interrupted = True
         self.is_speaking = False
-        try:
-            pygame.mixer.music.stop()
-        except Exception:
-            pass
+        if HAS_PYGAME_MIXER:
+            try:
+                pygame.mixer.music.stop()
+            except Exception:
+                pass
+        if self._active_proc:
+            try:
+                self._active_proc.terminate()
+            except Exception:
+                pass
+            self._active_proc = None
 
     def _play_file_with_interrupt(self, audio_path: str, text: str = "", prefix: str = "", live_print: bool = True) -> bool:
         """Plays audio file with deliberate keyboard barge-in monitoring (Enter / Space / Esc).
@@ -64,14 +72,25 @@ class SmoothSpeaker:
         self.is_speaking = True
         self.is_interrupted = False
 
-        try:
-            pygame.mixer.music.load(str(audio_path))
-            pygame.mixer.music.play()
-            time.sleep(0.04)  # Ensure SDL/pygame audio stream is actively buffered
-        except Exception as e:
-            print(f"[Playback Load Error] {e}")
-            self.is_speaking = False
-            return True
+        if HAS_PYGAME_MIXER:
+            try:
+                pygame.mixer.music.load(str(audio_path))
+                pygame.mixer.music.play()
+                time.sleep(0.04)
+                is_playing = lambda: pygame.mixer.music.get_busy()
+            except Exception:
+                is_playing = lambda: False
+        else:
+            # Native Linux playback via ffplay or pw-play
+            player = shutil.which("ffplay") or shutil.which("pw-play") or "aplay"
+            args = [player, "-nodisp", "-autoexit", "-loglevel", "quiet", str(audio_path)] if "ffplay" in player else [player, str(audio_path)]
+            try:
+                self._active_proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                is_playing = lambda: (self._active_proc is not None and self._active_proc.poll() is None)
+            except Exception as e:
+                print(f"[Audio Player Error] {e}")
+                self.is_speaking = False
+                return True
 
         # 1. Start live synchronized typewriter in background thread
         print_thread = None
@@ -95,14 +114,12 @@ class SmoothSpeaker:
                 fd = sys.stdin.fileno()
                 old_settings = termios.tcgetattr(fd)
                 tty.setcbreak(fd)
-                termios.tcflush(fd, termios.TCIFLUSH)  # Discard any stale Enter/keypresses from prompt
+                termios.tcflush(fd, termios.TCIFLUSH)
             except Exception:
                 fd = None
 
         try:
-            # Short grace period to ensure get_busy reflects playing state
-            while (pygame.mixer.music.get_busy() or (print_thread and print_thread.is_alive())) and not self.is_interrupted:
-                # Check deliberate keyboard tap (Enter, Space, Esc, Q)
+            while (is_playing() or (print_thread and print_thread.is_alive())) and not self.is_interrupted:
                 if fd is not None:
                     r, _, _ = select.select([sys.stdin], [], [], 0)
                     if r:
@@ -170,9 +187,63 @@ class SmoothSpeaker:
                 return str(out_path)
             return ""
 
+    def _split_sentences(self, text: str) -> list:
+        """
+        Splits text into spoken sentence chunks with numbered-list & abbreviation protection:
+        - Prevents breaking '1. Step one' at '1.'
+        - Prevents breaking decimals '3.14'
+        - Prevents breaking abbreviations ('e.g.', 'i.e.', 'etc.', 'Mr.')
+        - Handles English (. ? !) and Arabic (؟ .)
+        """
+        if not text:
+            return []
+        
+        # Protect numbered list markers: '1. ', '2. ', '١. '
+        t = re.sub(r"(\b\d+)\.(\s+)", r"\1__DOT__\2", text)
+        t = re.sub(r"([\u0660-\u0669]+)\.(\s+)", r"\1__DOT__\2", t)
+        
+        # Protect abbreviations
+        t = re.sub(r"\b(e\.g|i\.e|etc|mr|ms|mrs|dr|vs)\.", r"\1__DOT__", t, flags=re.IGNORECASE)
+        
+        # Split on sentence boundaries: . ! ? or Arabic ؟ or newlines
+        raw_parts = re.split(r"(?<=[.!?؟\n])\s+", t)
+        
+        sentences = []
+        for part in raw_parts:
+            restored = part.replace("__DOT__", ".").strip()
+            if restored:
+                sentences.append(restored)
+        return sentences or [text.strip()]
+
+    def _prepare_audio_file(self, text: str) -> str:
+        """Synthesizes or retrieves cached audio for a single sentence."""
+        clean_text = text.strip()[:400]
+        has_arabic = bool(re.search(r"[\u0600-\u06FF]", clean_text))
+        voices_to_try = ["ar-JO-SanaNeural", "ar-EG-SalmaNeural"] if has_arabic else [self.voice, self.fallback_voice]
+
+        for v in voices_to_try:
+            try:
+                cache_key = hashlib.md5(f"{v}_{clean_text}".encode("utf-8")).hexdigest()[:12]
+                cached_file = CACHE_DIR / f"smooth_{cache_key}.mp3"
+                if cached_file.exists() and cached_file.stat().st_size > 500:
+                    return str(cached_file)
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    audio_file = pool.submit(asyncio.run, self._generate_edge_speech(clean_text, v)).result(timeout=10.0)
+                if audio_file and os.path.exists(audio_file):
+                    return audio_file
+            except Exception:
+                continue
+
+        # Secondary fallback: Google TTS
+        try:
+            return self._generate_google_tts(clean_text)
+        except Exception:
+            return ""
+
     def speak(self, text: str, prefix: str = "", live_print: bool = True) -> bool:
-        """Speaks with smooth, human neural voice with instant barge-in interruption.
-        Guarantees zero robotic voices.
+        """Speaks with smooth, human neural voice with instant sentence-by-sentence streaming
+        and live barge-in interruption. Guarantees zero robotic voices.
         """
         if self.is_muted or not text or not text.strip():
             if live_print and text:
@@ -180,43 +251,49 @@ class SmoothSpeaker:
                 visualizer.moving_print(text, prefix=prefix)
             return True
 
-        clean_text = text.strip()[:400]
+        sentences = self._split_sentences(text.strip())
+        if not sentences:
+            return True
 
-        # Automatic Arabic speech detection: switch to Arabic neural voice if text contains Arabic
-        has_arabic = bool(re.search(r"[\u0600-\u06FF]", clean_text))
-        voices_to_try = ["ar-JO-SanaNeural", "ar-EG-SalmaNeural"] if has_arabic else [self.voice, self.fallback_voice]
-
-        # 1. Primary: Silky Smooth Microsoft Neural Voice via Edge-TTS (Sonia or Arabic Sana)
-        for v in voices_to_try:
-            try:
-                # Instant disk cache check (0ms network latency)
-                cache_key = hashlib.md5(f"{v}_{clean_text}".encode("utf-8")).hexdigest()[:12]
-                cached_file = CACHE_DIR / f"smooth_{cache_key}.mp3"
-                if cached_file.exists() and cached_file.stat().st_size > 500:
-                    return self._play_file_with_interrupt(str(cached_file), text=clean_text, prefix=prefix, live_print=live_print)
-
-                # Generate with 12.0s timeout so synthesis completes naturally
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    audio_file = pool.submit(asyncio.run, self._generate_edge_speech(clean_text, v)).result(timeout=12.0)
-
-                if audio_file and os.path.exists(audio_file):
-                    return self._play_file_with_interrupt(audio_file, text=clean_text, prefix=prefix, live_print=live_print)
-            except Exception:
-                continue
-
-        # 2. Secondary: Smooth Google Neural Voice (British accent or Arabic)
-        try:
-            lang = "ar" if has_arabic else "en"
-            audio_file = self._generate_google_tts(clean_text)
+        if len(sentences) == 1:
+            audio_file = self._prepare_audio_file(sentences[0])
             if audio_file and os.path.exists(audio_file):
-                return self._play_file_with_interrupt(audio_file, text=clean_text, prefix=prefix, live_print=live_print)
-        except Exception:
-            pass
+                return self._play_file_with_interrupt(audio_file, text=sentences[0], prefix=prefix, live_print=live_print)
+            elif live_print:
+                from jarvis.ui.visuals import visualizer
+                visualizer.moving_print(sentences[0], prefix=prefix)
+            return True
 
-        # 3. Clean Text-Only fallback if network is completely down (NEVER robotic eSpeak)
-        if live_print and clean_text:
-            from jarvis.ui.visuals import visualizer
-            visualizer.moving_print(clean_text, prefix=prefix)
-        return True
+        # Pipelined Multi-Sentence Streaming:
+        # Pre-fetch next sentence audio in background while current sentence is actively playing
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        next_future = executor.submit(self._prepare_audio_file, sentences[0])
+
+        for i, sentence in enumerate(sentences):
+            if self.is_interrupted:
+                break
+
+            try:
+                audio_file = next_future.result(timeout=10.0)
+            except Exception:
+                audio_file = ""
+
+            # Launch prefetch of next sentence immediately
+            if i + 1 < len(sentences) and not self.is_interrupted:
+                next_future = executor.submit(self._prepare_audio_file, sentences[i + 1])
+
+            curr_prefix = prefix if i == 0 else " "
+            if audio_file and os.path.exists(audio_file):
+                completed = self._play_file_with_interrupt(audio_file, text=sentence, prefix=curr_prefix, live_print=live_print)
+                if not completed:
+                    self.stop()
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    return False
+            elif live_print:
+                from jarvis.ui.visuals import visualizer
+                visualizer.moving_print(sentence, prefix=curr_prefix)
+
+        executor.shutdown(wait=False)
+        return not self.is_interrupted
 
 voice_speaker = SmoothSpeaker()

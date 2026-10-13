@@ -234,7 +234,7 @@ class NativeSpeechRecognizer:
                 if vosk_path.exists():
                     self.vosk_model = vosk.Model(str(vosk_path))
                 else:
-                    self.vosk_model = vosk.Model(lang="en-us")
+                    self.vosk_model = None
 
                 if spk_path.exists():
                     self.spk_model = vosk.SpkModel(str(spk_path))
@@ -253,18 +253,38 @@ class NativeSpeechRecognizer:
         self.worker = AudioStreamWorker(sample_rate=self.sample_rate, chunk_duration=self.chunk_duration)
 
     def _normalize_transcription(self, text: str) -> str:
-        """Corrects acoustic homophones (e.g. Israel -> Ezra) and aligns British slang and Arabic."""
+        """
+        Phonetic auto-correction table & noise/filler rejection:
+        - Filters isolated coughs, clicks, and fillers (uh, um, mm, er)
+        - Corrects acoustic homophones (Israel -> Ezra, antique gravity -> antigravity)
+        - Corrects known desktop & app mishearings (e.g. control my temp -> control my tab)
+        - Normalizes Arabic phonetic variants (عزرائيل / اسراء -> عزرا)
+        """
         if not text:
             return ""
         t = text.strip()
+
+        # Reject pure filler/noise tokens
+        low = t.lower()
+        if low in ("uh", "um", "er", "ah", "mm", "mmm", "hmm", "huh", "cough", "click") or low in NOISE_PHRASES:
+            return ""
+
+        # Strip leading conversational fillers: 'uh', 'um', 'like', 'so'
+        t = re.sub(r"^(?:(?:uh|um|er|ah|mm|like|so|well)\s+)+", "", t, flags=re.IGNORECASE).strip()
+
         # Homophone corrections: Israel / Isra / Esra / Asra / Azra -> Ezra
         t = re.sub(r"\b(israel|isra|asra|esra|azra|ezrah)\b", "Ezra", t, flags=re.IGNORECASE)
         # Antigravity homophones: antique gravity / anti gravity / the gravity -> antigravity
         t = re.sub(r"\b(antique gravity|anti gravity|the gravity)\b", "antigravity", t, flags=re.IGNORECASE)
         # Arabic phonetic Ezra:
-        t = re.sub(r"\b(عزرة|إسراء|اسراء|اسرا|عزرائيل)\b", "عزرا", t)
+        t = re.sub(r"\b(عزرة|إسراء|اسراء|اسرا|عزرائيل|ابو عزرا|يا عزرا)\b", "عزرا", t)
+        # Known desktop control corrections
+        t = re.sub(r"\bcontrol my temp\b", "control my tab", t, flags=re.IGNORECASE)
+        t = re.sub(r"\byou tube\b", "youtube", t, flags=re.IGNORECASE)
+        t = re.sub(r"\bgit hub\b", "github", t, flags=re.IGNORECASE)
         # Fix colloquial "in it" -> "innit"
         t = re.sub(r"\bin it\b", "innit", t, flags=re.IGNORECASE)
+
         return t.strip()
 
     def record_until_finished(self, max_wait_sec: float = 15.0, silence_threshold_sec: float = 0.65) -> str:

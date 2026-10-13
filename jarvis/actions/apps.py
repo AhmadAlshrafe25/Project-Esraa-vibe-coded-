@@ -2,9 +2,17 @@ import os
 import time
 import subprocess
 import shutil
-import pyautogui
 from pathlib import Path
 from config.settings import CACHE_DIR
+
+# Ensure DISPLAY variable exists to prevent mouseinfo crash on headless/Wayland
+if "DISPLAY" not in os.environ and "WAYLAND_DISPLAY" not in os.environ:
+    os.environ["DISPLAY"] = ":0"
+
+try:
+    import pyautogui
+except Exception:
+    pyautogui = None
 
 # Common Linux & Flatpak application mappings
 FLATPAK_APPS = {
