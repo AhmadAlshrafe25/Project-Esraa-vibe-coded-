@@ -170,15 +170,17 @@ def get_system_prompt(learned_context: str) -> str:
 
 class BrainEngine:
     def __init__(self):
-        self.gemini_key = GEMINI_API_KEY
-        self.groq_key = GROQ_API_KEY
+        self.reload_keys()
 
     def reload_keys(self):
         from config import settings
         import importlib
         importlib.reload(settings)
-        self.gemini_key = settings.GEMINI_API_KEY
-        self.groq_key = settings.GROQ_API_KEY
+        raw_gemini = getattr(settings, "GEMINI_API_KEY", "") or ""
+        # Multi-key rotation: supports comma-separated keys (e.g. GEMINI_API_KEY=key1,key2,key3)
+        self.gemini_keys = [k.strip() for k in raw_gemini.split(",") if k.strip()]
+        self.gemini_key = self.gemini_keys[0] if self.gemini_keys else ""
+        self.groq_key = getattr(settings, "GROQ_API_KEY", "") or ""
 
     async def execute_tool(self, tool_name: str, args: Dict[str, Any], user_context: str = "", speaker_tier: str = "verified") -> str:
         """Executes system or desktop action with biometric permission gating."""
@@ -488,29 +490,28 @@ class BrainEngine:
         prompt = get_system_prompt(learned_context=facts_str)
 
         output = None
-        # 2. Attempt Gemini (Free on Google AI Studio)
-        if self.gemini_key:
-            try:
-                output = await self._call_gemini(user_message, prompt, speaker_tier=speaker_tier)
-            except Exception:
-                # Quota/latency failover - local semantic action engine takes over seamlessly
-                pass
-
-        # 2. Attempt Groq fallback
-        if not output and self.groq_key:
+        # Priority 1: Groq (14,400 free requests per day, ~250ms voice speed)
+        if self.groq_key:
             try:
                 output = await self._call_groq(user_message, prompt, speaker_tier=speaker_tier)
             except Exception:
                 pass
 
-        # 3. Attempt Local Ollama fallback (100% Offline LLM on localhost:11434)
+        # Priority 2: Gemini with Multi-Key Rotation (Free on Google AI Studio)
+        if not output and self.gemini_keys:
+            try:
+                output = await self._call_gemini(user_message, prompt, speaker_tier=speaker_tier)
+            except Exception:
+                pass
+
+        # Priority 3: Local Ollama daemon (100% Offline LLM on localhost:11434)
         if not output:
             try:
                 output = await self._call_ollama(user_message, prompt, speaker_tier=speaker_tier)
             except Exception:
                 pass
 
-        # 4. Offline smart rule fallback
+        # Priority 4: Offline smart rule fallback
         if not output:
             output = await self._offline_smart_fallback(user_message)
 
@@ -539,10 +540,14 @@ class BrainEngine:
 
     async def _call_gemini(self, user_message: str, system_prompt: str, speaker_tier: str = "verified") -> Dict[str, Any]:
         candidate_models = [
-            "gemini-robotics-er-2-preview",
-            "gemini-3.5-transcribe",
+            "gemini-3.8-flash",
+            "gemini-flash-latest",
+            "gemini-3.7-flash",
+            "gemini-3.5-flash",
             "gemini-3.8-flash-lite-tts",
-            "gemini-3.8-flash-tts"
+            "gemini-3.8-flash-tts",
+            "gemini-robotics-er-2-preview",
+            "gemini-3.5-transcribe"
         ]
         
         recent = memory_service.get_recent_history(8)
@@ -579,44 +584,52 @@ class BrainEngine:
 
         req_timeout = aiohttp.ClientTimeout(total=4.0, connect=1.5)
         async with aiohttp.ClientSession() as session:
-            for model_name in candidate_models:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.gemini_key}"
-                try:
-                    async with session.post(url, json=payload, timeout=req_timeout) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            if "candidates" in data and data["candidates"]:
-                                cand = data["candidates"][0]
-                                parts = cand.get("content", {}).get("parts", [])
-                                reply_text = "".join([p.get("text", "") for p in parts if p.get("text")]).strip()
-                                if reply_text:
-                                    return await self._process_tool_calls_in_text(reply_text, user_context=user_message, speaker_tier=speaker_tier)
-                        elif resp.status in (404, 400, 429, 500, 503):
-                            continue  # Quota limit or model unavailable; try next model in candidate list
-                except Exception:
-                    continue
+            for api_key in self.gemini_keys:
+                for model_name in candidate_models:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+                    try:
+                        async with session.post(url, json=payload, timeout=req_timeout) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                if "candidates" in data and data["candidates"]:
+                                    cand = data["candidates"][0]
+                                    parts = cand.get("content", {}).get("parts", [])
+                                    reply_text = "".join([p.get("text", "") for p in parts if p.get("text")]).strip()
+                                    if reply_text:
+                                        return await self._process_tool_calls_in_text(reply_text, user_context=user_message, speaker_tier=speaker_tier)
+                            elif resp.status == 429:
+                                break  # Daily quota reached for this key; rotate immediately to next key!
+                            elif resp.status in (404, 400, 500, 503):
+                                continue
+                    except Exception:
+                        continue
         raise Exception("All Gemini candidate models failed to respond.")
 
     async def _call_groq(self, user_message: str, system_prompt: str, speaker_tier: str = "verified") -> Dict[str, Any]:
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {"Authorization": f"Bearer {self.groq_key}"}
-        payload = {
-            "model": "llama-3.3-70b-versatile",
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
-            ],
-            "temperature": 0.5,
-            "max_tokens": 600
-        }
+        models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=headers) as resp:
-                data = await resp.json()
-                if "choices" in data:
-                    reply_text = data["choices"][0]["message"]["content"]
-                    return await self._process_tool_calls_in_text(reply_text, user_context=user_message, speaker_tier=speaker_tier)
-                else:
-                    raise Exception(f"Groq API returned error: {data}")
+            for model in models:
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message}
+                    ],
+                    "temperature": 0.5,
+                    "max_tokens": 800
+                }
+                try:
+                    async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=4.5)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if "choices" in data and data["choices"]:
+                                reply_text = data["choices"][0]["message"]["content"]
+                                return await self._process_tool_calls_in_text(reply_text, user_context=user_message, speaker_tier=speaker_tier)
+                except Exception:
+                    continue
+        raise Exception("Groq failed to respond.")
 
     async def _call_ollama(self, user_message: str, system_prompt: str, speaker_tier: str = "verified") -> Dict[str, Any]:
         """Calls local Ollama daemon (100% offline LLM) at http://127.0.0.1:11434 with fast timeout."""
