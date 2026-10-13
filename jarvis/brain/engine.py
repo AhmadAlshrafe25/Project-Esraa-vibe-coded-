@@ -361,12 +361,12 @@ class BrainEngine:
 
     async def _call_gemini(self, user_message: str, system_prompt: str, speaker_tier: str = "verified") -> Dict[str, Any]:
         candidate_models = [
+            "gemini-3.8-flash",
             "gemini-flash-latest",
             "gemini-3.5-flash",
             "gemini-3.7-flash",
             "gemini-3.1-flash-lite",
             "gemini-flash-lite-latest",
-            "gemini-3.8-flash",
             "gemini-2.5-pro",
             "gemini-pro-latest"
         ]
