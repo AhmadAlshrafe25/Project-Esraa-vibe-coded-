@@ -289,7 +289,7 @@ class NativeSpeechRecognizer:
 
         # Reject pure filler/noise tokens
         low = t.lower()
-        if low in ("uh", "um", "er", "ah", "mm", "mmm", "hmm", "huh", "cough", "click") or low in NOISE_PHRASES:
+        if low in ("uh", "um", "er", "ah", "ahh", "ahhh", "oh", "ohh", "ooh", "mm", "mmm", "hmm", "huh", "cough", "click", "eh", "mhm") or low in NOISE_PHRASES:
             return ""
 
         # Strip leading conversational fillers: 'uh', 'um', 'like', 'so'

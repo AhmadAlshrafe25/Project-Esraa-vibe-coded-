@@ -134,7 +134,7 @@ def continuous_conversation_loop():
     import re
     from jarvis.voice.biometrics import voice_dna
 
-    DWELL_TIMEOUT_SEC = 180.0  # 3 minutes dwell window
+    DWELL_TIMEOUT_SEC = 25.0  # 25 seconds natural conversational follow-up window
     loop_state = {
         "is_awake": True,
         "last_interaction_time": time.time(),
@@ -164,7 +164,7 @@ def continuous_conversation_loop():
     print("\033[1;32m╚═══════════════════════════════════════════════════════════════╝\033[0m")
     print("\033[1;36m[•] Active Mode:\033[0m Listening now! Speak freely into your headset.")
     print("\033[1;36m[•] Instant Wake:\033[0m Activates the second the laptop lid opens or wakes from sleep.")
-    print("\033[1;36m[•] Dwell Window:\033[0m Stays awake for 3 minutes without repeating wake words.")
+    print("\033[1;36m[•] Dwell Window:\033[0m 25s conversational follow-up (enters quiet standby so colleague chats aren't overheard).")
     print("\033[1;36m[•] Sleep Command:\033[0m Say \033[1;31m'go to sleep'\033[0m or \033[1;31m'اسكت'\033[0m to return to standby.")
     print("\033[1;36m[•] Interrupt:\033[0m Tap ENTER or SPACE anytime to interrupt.\n")
 
@@ -179,9 +179,7 @@ def continuous_conversation_loop():
                 # Check dwell timeout if currently awake
                 if loop_state["is_awake"] and (time.time() - loop_state["last_interaction_time"] > DWELL_TIMEOUT_SEC):
                     loop_state["is_awake"] = False
-                    timeout_msg = "Three minutes idle. Entering standby mode, sir. Say 'Ezra' anytime."
-                    print(f"\n\033[1;33m[Standby]:\033[0m {timeout_msg}\n")
-                    voice_speaker.speak(timeout_msg)
+                    print(f"\n\033[1;33m[Standby Mode]:\033[0m Standing by (Say 'Ezra' anytime to wake me).\n")
 
                 # Instant Mic Handover: render live mic indicator immediately!
                 status_bar.render_listening(level=0, is_heard=False)

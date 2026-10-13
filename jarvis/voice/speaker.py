@@ -165,11 +165,20 @@ class SmoothSpeaker:
 
         finally:
             status_bar.stop_speaking()
+            # Drain any trailing bytes from multi-byte key/escape sequences (e.g. CSI u ^[[101;10u)
+            if fd is not None:
+                try:
+                    while select.select([sys.stdin], [], [], 0)[0]:
+                        os.read(fd, 1024)
+                except Exception:
+                    pass
             # Restore terminal attributes cleanly
             if fd is not None and old_settings is not None:
                 try:
                     import termios
+                    termios.tcflush(fd, termios.TCIFLUSH)
                     termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                    termios.tcflush(fd, termios.TCIFLUSH)
                 except Exception:
                     pass
 

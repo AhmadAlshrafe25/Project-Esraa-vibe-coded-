@@ -542,16 +542,7 @@ class BrainEngine:
             "gemini-robotics-er-2-preview",
             "gemini-3.5-transcribe",
             "gemini-3.8-flash-lite-tts",
-            "gemini-3.8-flash-tts",
-            "gemini-3-flash-preview",
-            "gemini-3.7-flash",
-            "gemini-3.1-flash-lite-preview",
-            "gemini-3.5-flash-lite",
-            "gemini-3.5-flash",
-            "gemini-3.6-flash",
-            "gemini-3.8-flash",
-            "gemini-flash-latest",
-            "gemini-pro-latest"
+            "gemini-3.8-flash-tts"
         ]
         
         recent = memory_service.get_recent_history(8)
@@ -586,7 +577,7 @@ class BrainEngine:
             "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1000}
         }
 
-        req_timeout = aiohttp.ClientTimeout(total=8.0, connect=3.0)
+        req_timeout = aiohttp.ClientTimeout(total=4.0, connect=1.5)
         async with aiohttp.ClientSession() as session:
             for model_name in candidate_models:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.gemini_key}"
