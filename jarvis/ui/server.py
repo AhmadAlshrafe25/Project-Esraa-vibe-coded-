@@ -208,6 +208,13 @@ class EzraUIServer:
                                 voice_speaker.speak(reply_speech, live_print=False)
                                 await self.broadcast({"type": "state_change", "state": "idle", "detail": "Standby"})
 
+                        elif msg_type == "voice_trigger":
+                            v_action = data.get("action", "stop")
+                            if v_action == "start":
+                                await self.broadcast({"type": "state_change", "state": "listening", "detail": "Mic active"})
+                            else:
+                                await self.broadcast({"type": "state_change", "state": "idle", "detail": "Standby"})
+
                         elif msg_type == "action":
                             action = data.get("action", "")
                             res = self._execute_action(action)
@@ -245,8 +252,14 @@ class EzraUIServer:
         elif action == "open_terminal":
             return AppManager.open_terminal()
         elif action == "open_browser":
-            browser = DEFAULT_BROWSER or "google-chrome"
-            return AppManager.open_app(browser)
+            # Brave is installed as Flatpak (com.brave.Browser)
+            try:
+                import subprocess as _sp
+                _sp.Popen(["flatpak", "run", "com.brave.Browser"], start_new_session=True)
+                return "Brave launched"
+            except Exception:
+                browser = DEFAULT_BROWSER or "google-chrome"
+                return AppManager.open_app(browser)
         elif action == "capture_screen":
             img = screen_vision.capture_screen()
             return "Screenshot captured successfully" if img else "Failed"

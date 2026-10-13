@@ -1,402 +1,360 @@
 /**
- * ==============================================================================
- * PROJECT EZRA // HOLOGRAPHIC JARVIS CLIENT CONTROLLER
- * Manages WebSocket telemetry, audio visualizer, chat stream, and quick actions.
- * ==============================================================================
+ * PROJECT EZRA // HOLOGRAPHIC JARVIS CLIENT CONTROLLER v3
+ * Manages WebSocket telemetry, state machine, waveform, chat, quick actions.
  */
 
-class EzraClientController {
+class EzraHUD {
   constructor() {
-    this.ws = null;
-    this.isMuted = false;
-    this.isRobotic = false;
+    this.ws         = null;
+    this.isMuted    = false;
+    this.isRobotic  = false;
     this.isSleeping = false;
-    this.isMicActive = false;
-    this.audioContext = null;
-    this.analyser = null;
-    this.microphone = null;
-    this.audioData = new Uint8Array(64);
+    this.isMicOn    = false;
 
-    this.waveformCanvas = document.getElementById('waveformCanvas');
-    this.waveformCtx = this.waveformCanvas ? this.waveformCanvas.getContext('2d') : null;
+    // Gauge circumference for r=40: 2πr ≈ 251.3
+    this.CIRC = 251.3;
 
-    this.initClock();
-    this.initWebSocket();
-    this.initKeyboardShortcuts();
-    this.initWaveform();
+    this._bindEls();
+    this._initClock();
+    this._initWaveform();
+    this._initKeyboard();
+    this._connectWS();
   }
 
-  initClock() {
-    const clockEl = document.getElementById('hudClock');
-    const updateTime = () => {
-      const now = new Date();
-      const h = String(now.getHours()).padStart(2, '0');
-      const m = String(now.getMinutes()).padStart(2, '0');
-      const s = String(now.getSeconds()).padStart(2, '0');
-      if (clockEl) clockEl.textContent = `${h}:${m}:${s}`;
+  /* ─── DOM BINDINGS ─── */
+  _bindEls() {
+    this.statusLbl  = document.getElementById('statusLbl');
+    this.statusDot  = document.getElementById('statusDot');
+    this.dwellVal   = document.getElementById('dwellVal');
+    this.bioUser    = document.getElementById('bioUser');
+    this.engineEl   = document.getElementById('activeEngine');
+    this.distroEl   = document.getElementById('distroName');
+    this.clockEl    = document.getElementById('hudClock');
+    this.cpuVal     = document.getElementById('cpuVal');
+    this.cpuBar     = document.getElementById('cpuBar');
+    this.ramVal     = document.getElementById('ramVal');
+    this.ramBar     = document.getElementById('ramBar');
+    this.uptimeVal  = document.getElementById('uptimeVal');
+    this.diskVal    = document.getElementById('diskVal');
+    this.lidVal     = document.getElementById('lidVal');
+    this.subTag     = document.getElementById('subTag');
+    this.subTs      = document.getElementById('subTs');
+    this.subText    = document.getElementById('subText');
+    this.chatLog    = document.getElementById('chatLog');
+    this.liveSttTxt = document.getElementById('liveSttTxt');
+    this.memList    = document.getElementById('memList');
+    this.memCount   = document.getElementById('memCount');
+    this.micBtn     = document.getElementById('micBtn');
+    this.hexL       = document.getElementById('hexL');
+    this.hexR       = document.getElementById('hexR');
+    this.synapseEl  = document.getElementById('synapseVal');
+    this.latencyEl  = document.getElementById('latencyVal');
+    this.volVal     = document.getElementById('volVal');
+    this.volSlider  = document.getElementById('volSlider');
+    this.sleepBtn   = document.getElementById('sleepBtn');
+    this.waveCanvas = document.getElementById('waveformCanvas');
+
+    if (this.micBtn) {
+      this.micBtn.addEventListener('click', () => this._toggleMic());
+    }
+
+    // Volume display live
+    if (this.volSlider) {
+      this.volSlider.addEventListener('input', () => {
+        if (this.volVal) this.volVal.textContent = this.volSlider.value;
+      });
+    }
+  }
+
+  /* ─── CLOCK ─── */
+  _initClock() {
+    const tick = () => {
+      const n = new Date();
+      const pad = v => String(v).padStart(2, '0');
+      if (this.clockEl) this.clockEl.textContent = `${pad(n.getHours())}:${pad(n.getMinutes())}:${pad(n.getSeconds())}`;
     };
-    updateTime();
-    setInterval(updateTime, 1000);
+    tick();
+    setInterval(tick, 1000);
   }
 
-  initWebSocket() {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
-
-    this.ws = new WebSocket(wsUrl);
+  /* ─── WEBSOCKET ─── */
+  _connectWS() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    this.ws = new WebSocket(`${proto}//${location.host}/ws`);
 
     this.ws.onopen = () => {
-      console.log('[Ezra WS] Connected to Neural Core.');
-      this.appendChatMsg('system', 'Neural Link established. Connected to local JARVIS daemon.');
-      // Fetch initial status
-      this.sendMessage({ type: 'get_status' });
+      console.log('[Ezra] WebSocket connected.');
+      this._appendChat('sys', 'Neural link established. Laptop mic active — speak freely.');
+      this._send({ type: 'get_status' });
     };
 
-    this.ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        this.handleServerMessage(data);
-      } catch (err) {
-        console.error('[Ezra WS] Parse error:', err);
-      }
+    this.ws.onmessage = e => {
+      try { this._handleMsg(JSON.parse(e.data)); }
+      catch (err) { console.error('[Ezra] WS parse error:', err); }
     };
 
     this.ws.onclose = () => {
-      console.warn('[Ezra WS] Connection closed. Reconnecting in 2s...');
-      setTimeout(() => this.initWebSocket(), 2000);
+      console.warn('[Ezra] WS closed, reconnecting in 2s…');
+      setTimeout(() => this._connectWS(), 2000);
     };
 
-    this.ws.onerror = (err) => {
-      console.error('[Ezra WS] Error:', err);
-    };
+    this.ws.onerror = err => console.error('[Ezra] WS error:', err);
   }
 
-  sendMessage(msg) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(msg));
-    }
+  _send(obj) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN)
+      this.ws.send(JSON.stringify(obj));
   }
 
-  handleServerMessage(data) {
+  /* ─── MESSAGE HANDLER ─── */
+  _handleMsg(data) {
     switch (data.type) {
-      case 'telemetry':
-        this.updateTelemetry(data);
-        break;
-
-      case 'state_change':
-        this.updateState(data.state, data.detail);
-        break;
-
+      case 'telemetry':    this._updateTelemetry(data); break;
+      case 'state_change': this._setState(data.state, data.detail); break;
       case 'speech':
-        this.updateSubtitles(data.speaker || 'EZRA', data.text);
-        if (data.speaker === 'EZRA') {
-          this.appendChatMsg('ezra', data.text);
-        }
+        this._updateSubtitle(data.speaker || 'EZRA', data.text);
+        if (data.speaker === 'EZRA') this._appendChat('ezra', data.text);
         break;
-
       case 'live_stt':
-        const lp = document.getElementById('livePreviewText');
-        if (lp) lp.textContent = data.text || 'Listening...';
+        if (this.liveSttTxt)
+          this.liveSttTxt.textContent = data.text || 'Listening…';
         break;
-
-      case 'memories':
-        this.updateMemories(data.items);
-        break;
-
+      case 'memories':     this._updateMemories(data.items); break;
       case 'audio_level':
-        if (window.ezraBrain) {
-          window.ezraBrain.setAudioLevel(data.level || 0);
-        }
+        this._audioLevel = data.level || 0;
+        if (window.ezraBrain) window.ezraBrain.setAudioLevel(this._audioLevel);
         break;
-
-      default:
+      case 'user_speech':
+        this._appendChat('user', data.text);
+        if (this.liveSttTxt) this.liveSttTxt.textContent = data.text;
         break;
+      default: break;
     }
   }
 
-  updateTelemetry(data) {
-    // 1. CPU Gauge (stroke-dashoffset: 264 max -> 0 full)
-    const cpuVal = document.getElementById('cpuVal');
-    const cpuBar = document.getElementById('cpuBar');
-    if (cpuVal && cpuBar) {
-      const cpu = Math.round(data.cpu || 0);
-      cpuVal.textContent = `${cpu}%`;
-      const offset = 264 - (264 * cpu) / 100;
-      cpuBar.style.strokeDashoffset = offset;
+  /* ─── STATE MACHINE ─── */
+  _setState(state, detail) {
+    document.body.className = `state-${state}`;
+
+    const labels = {
+      idle:      'STANDBY // READY',
+      listening: 'LISTENING',
+      thinking:  'PROCESSING…',
+      speaking:  'SPEAKING',
+      sleep:     'STANDBY MODE',
+    };
+    if (this.statusLbl) this.statusLbl.textContent = labels[state] || state.toUpperCase();
+
+    // Mic button glow
+    if (this.micBtn) this.micBtn.classList.toggle('active', state === 'listening');
+
+    if (window.ezraBrain) window.ezraBrain.setState(state);
+  }
+
+  /* ─── TELEMETRY ─── */
+  _updateTelemetry(d) {
+    // CPU gauge (stroke-dashoffset: CIRC=full off → 0=full on)
+    if (this.cpuVal && this.cpuBar) {
+      const cpu = Math.round(d.cpu || 0);
+      this.cpuVal.textContent = `${cpu}%`;
+      this.cpuBar.style.strokeDashoffset = this.CIRC - (this.CIRC * cpu / 100);
     }
-
-    // 2. RAM Gauge
-    const ramVal = document.getElementById('ramVal');
-    const ramBar = document.getElementById('ramBar');
-    if (ramVal && ramBar) {
-      const ram = Math.round(data.ram || 0);
-      ramVal.textContent = `${ram}%`;
-      const offset = 264 - (264 * ram) / 100;
-      ramBar.style.strokeDashoffset = offset;
+    if (this.ramVal && this.ramBar) {
+      const ram = Math.round(d.ram || 0);
+      this.ramVal.textContent = `${ram}%`;
+      this.ramBar.style.strokeDashoffset = this.CIRC - (this.CIRC * ram / 100);
     }
+    if (this.uptimeVal && d.uptime)    this.uptimeVal.textContent = d.uptime;
+    if (this.diskVal   && d.disk)      this.diskVal.textContent   = `${d.disk}%`;
+    if (this.lidVal    && d.lid_status) this.lidVal.textContent   = d.lid_status.toUpperCase();
+    if (this.distroEl  && d.distro)    this.distroEl.textContent  = d.distro.toUpperCase();
+    if (this.engineEl  && d.engine)    this.engineEl.textContent  = d.engine.toUpperCase();
+    if (this.dwellVal  && d.dwell_sec !== undefined)
+      this.dwellVal.textContent = `${Number(d.dwell_sec).toFixed(1)}s`;
+    if (this.bioUser   && d.user_name)
+      this.bioUser.textContent = `${d.user_name.toUpperCase()} // ${(d.tier || 'VERIFIED').toUpperCase()}`;
 
-    // 3. Lines
-    const uptimeVal = document.getElementById('uptimeVal');
-    if (uptimeVal && data.uptime) uptimeVal.textContent = data.uptime;
+    // Sci-fi hex streams
+    const rh = () => Math.floor(Math.random() * 0xFFFFFF).toString(16).toUpperCase().padStart(6,'0');
+    if (this.hexL) this.hexL.textContent = `0x${rh().slice(0,4)}`;
+    if (this.hexR) this.hexR.textContent = `0x${rh()}`;
 
-    const diskVal = document.getElementById('diskVal');
-    if (diskVal && data.disk) diskVal.textContent = `${data.disk}%`;
+    // Synthetic synapse/latency churn
+    if (this.synapseEl)
+      this.synapseEl.textContent = `${(140000 + Math.floor(Math.random()*20000)).toLocaleString()}/s`;
+    if (this.latencyEl && d.latency_ms !== undefined)
+      this.latencyEl.textContent = `${d.latency_ms}ms`;
+  }
 
-    const lidVal = document.getElementById('lidVal');
-    if (lidVal && data.lid_status) lidVal.textContent = data.lid_status.toUpperCase();
-
-    const distroName = document.getElementById('distroName');
-    if (distroName && data.distro) distroName.textContent = data.distro.toUpperCase();
-
-    const dwellVal = document.getElementById('dwellVal');
-    if (dwellVal && data.dwell_sec !== undefined) {
-      dwellVal.textContent = `${Number(data.dwell_sec).toFixed(1)}s`;
-    }
-
-    const bioUser = document.getElementById('bioUser');
-    if (bioUser && data.user_name) {
-      bioUser.textContent = `${data.user_name.toUpperCase()} // ${data.tier ? data.tier.toUpperCase() : 'VERIFIED'}`;
-    }
-
-    const activeEngine = document.getElementById('activeEngine');
-    if (activeEngine && data.engine) {
-      activeEngine.textContent = data.engine.toUpperCase();
-    }
-
-    // Hex stream randomizer for sci-fi atmosphere
-    const hexL = document.getElementById('hexStreamL');
-    if (hexL) {
-      hexL.textContent = `0x${Math.floor(Math.random()*16777215).toString(16).toUpperCase().padStart(6,'0')}`;
+  /* ─── SUBTITLES ─── */
+  _updateSubtitle(speaker, text) {
+    if (this.subTag)  this.subTag.textContent  = `${speaker} // RESPONSE`;
+    if (this.subText) this.subText.textContent = text;
+    if (this.subTs) {
+      const n = new Date();
+      const pad = v => String(v).padStart(2,'0');
+      this.subTs.textContent = `${pad(n.getHours())}:${pad(n.getMinutes())}:${pad(n.getSeconds())}`;
     }
   }
 
-  updateState(state, detail) {
-    if (window.ezraBrain) {
-      window.ezraBrain.setState(state);
-    }
-    const micBtn = document.getElementById('micBtn');
-    if (micBtn) {
-      if (state === 'listening') micBtn.classList.add('active');
-      else micBtn.classList.remove('active');
-    }
+  /* ─── CHAT LOG ─── */
+  _appendChat(type, text) {
+    if (!this.chatLog || !text) return;
+    const el = document.createElement('div');
+    el.className = `chat-msg ${type}`;
+    const who = { user: '[YOU]', ezra: '[EZRA]', sys: '[SYSTEM]' }[type] || '[SYS]';
+    el.innerHTML = `<span class="msg-who">${who}</span><span class="msg-body">${this._esc(text)}</span>`;
+    this.chatLog.appendChild(el);
+    this.chatLog.scrollTop = this.chatLog.scrollHeight;
   }
 
-  updateSubtitles(speaker, text) {
-    const subTag = document.getElementById('subTag');
-    const subContent = document.getElementById('subContent');
-    const subTime = document.getElementById('subTime');
-
-    if (subTag) subTag.textContent = `${speaker} // RESPONSE`;
-    if (subContent) subContent.textContent = `"${text}"`;
-    if (subTime) {
-      const now = new Date();
-      subTime.textContent = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
-    }
+  _esc(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
-  appendChatMsg(type, text) {
-    const log = document.getElementById('chatLog');
-    if (!log || !text) return;
-
-    const msg = document.createElement('div');
-    msg.className = `chat-msg ${type}`;
-
-    let author = '[EZRA]';
-    if (type === 'user') author = '[YOU]';
-    else if (type === 'system') author = '[SYSTEM]';
-
-    msg.innerHTML = `<span class="msg-author">${author}</span> <span class="msg-body">${this.escapeHtml(text)}</span>`;
-    log.appendChild(msg);
-    log.scrollTop = log.scrollHeight;
-  }
-
-  escapeHtml(str) {
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-
-  updateMemories(items) {
-    const list = document.getElementById('memoryList');
-    const count = document.getElementById('memCount');
-    if (!list) return;
-
-    if (!items || items.length === 0) {
-      list.innerHTML = '<div class="mem-item empty">No memories stored yet.</div>';
-      if (count) count.textContent = '0';
+  /* ─── MEMORIES ─── */
+  _updateMemories(items) {
+    if (!this.memList) return;
+    if (!items || !items.length) {
+      this.memList.innerHTML = '<div class="mem-item empty">No memories stored yet.</div>';
+      if (this.memCount) this.memCount.textContent = '0';
       return;
     }
-
-    if (count) count.textContent = String(items.length);
-    list.innerHTML = items.slice(-5).reverse().map((item) => {
+    if (this.memCount) this.memCount.textContent = String(items.length);
+    this.memList.innerHTML = items.slice(-5).reverse().map(item => {
       const txt = typeof item === 'string' ? item : (item.memory || item.text || JSON.stringify(item));
-      return `<div class="mem-item">${this.escapeHtml(txt)}</div>`;
+      return `<div class="mem-item">${this._esc(txt)}</div>`;
     }).join('');
   }
 
-  initWaveform() {
-    if (!this.waveformCtx || !this.waveformCanvas) return;
-    const ctx = this.waveformCtx;
-    const w = this.waveformCanvas.width;
-    const h = this.waveformCanvas.height;
-
-    const draw = () => {
-      ctx.clearRect(0, 0, w, h);
-      const bars = 48;
-      const step = w / bars;
-      const audioLvl = (window.ezraBrain ? window.ezraBrain.audioLevel : 0) || 0;
-
-      for (let i = 0; i < bars; i++) {
-        // Futuristic equalizer waveform
-        const centerDist = Math.abs(i - bars / 2) / (bars / 2);
-        const factor = Math.max(0.1, 1.0 - centerDist);
-        const noise = Math.sin(performance.now() * 0.01 + i * 0.4) * 0.3 + 0.7;
-        const barH = Math.max(3, (factor * audioLvl * 32 + (factor * 3)) * noise);
-
-        const x = i * step + 2;
-        const y = (h - barH) / 2;
-
-        ctx.fillStyle = (i % 2 === 0) ? '#ff1a40' : '#ffb703';
-        ctx.shadowColor = '#ff1a40';
-        ctx.shadowBlur = 4;
-        ctx.fillRect(x, y, step - 3, barH);
-        ctx.shadowBlur = 0;
-      }
-      requestAnimationFrame(draw);
-    };
-    draw();
+  /* ─── MIC ─── */
+  _toggleMic() {
+    this.isMicOn = !this.isMicOn;
+    this._send({ type: 'voice_trigger', action: this.isMicOn ? 'start' : 'stop' });
+    this._setState(this.isMicOn ? 'listening' : 'idle');
   }
 
-  initKeyboardShortcuts() {
+  /* ─── KEYBOARD ─── */
+  _initKeyboard() {
     let spaceDown = false;
-    window.addEventListener('keydown', (e) => {
-      // Spacebar for Push-to-Talk (if not currently focused inside input field)
+
+    window.addEventListener('keydown', e => {
       if (e.code === 'Space' && document.activeElement !== document.getElementById('commandInput')) {
-        const pttCheck = document.getElementById('pttCheck');
-        if (pttCheck && pttCheck.checked && !spaceDown) {
-          e.preventDefault();
-          spaceDown = true;
-          this.triggerMic('start');
+        const ptt = document.getElementById('pttCheck');
+        if (ptt && ptt.checked && !spaceDown) {
+          e.preventDefault(); spaceDown = true;
+          this.isMicOn = true;
+          this._send({ type: 'voice_trigger', action: 'start' });
+          this._setState('listening');
         }
       }
-
-      // Enter to dispatch command if input focused
       if (e.key === 'Enter' && document.activeElement === document.getElementById('commandInput')) {
         this.sendCommand();
       }
     });
 
-    window.addEventListener('keyup', (e) => {
+    window.addEventListener('keyup', e => {
       if (e.code === 'Space') {
-        const pttCheck = document.getElementById('pttCheck');
-        if (pttCheck && pttCheck.checked && spaceDown) {
-          spaceDown = false;
-          this.triggerMic('stop');
+        const ptt = document.getElementById('pttCheck');
+        if (ptt && ptt.checked && spaceDown) {
+          spaceDown = false; this.isMicOn = false;
+          this._send({ type: 'voice_trigger', action: 'stop' });
+          this._setState('idle');
         }
       }
     });
-
-    const micBtn = document.getElementById('micBtn');
-    if (micBtn) {
-      micBtn.addEventListener('click', () => {
-        this.toggleMic();
-      });
-    }
   }
 
-  toggleMic() {
-    this.isMicActive = !this.isMicActive;
-    this.triggerMic(this.isMicActive ? 'start' : 'stop');
-  }
-
-  triggerMic(action) {
-    this.sendMessage({
-      type: 'voice_trigger',
-      action: action
-    });
-    if (action === 'start') {
-      this.updateState('listening');
-    } else {
-      this.updateState('idle');
-    }
-  }
-
+  /* ─── SEND TEXT COMMAND ─── */
   sendCommand() {
     const input = document.getElementById('commandInput');
     if (!input) return;
     const text = input.value.trim();
     if (!text) return;
-
-    this.appendChatMsg('user', text);
+    this._appendChat('user', text);
     input.value = '';
+    this._send({ type: 'chat', text });
+    this._setState('thinking');
+  }
 
-    this.sendMessage({
-      type: 'chat',
-      text: text
-    });
+  /* ─── WAVEFORM ─── */
+  _initWaveform() {
+    if (!this.waveCanvas) return;
+    const ctx = this.waveCanvas.getContext('2d');
+    const W = this.waveCanvas.width;
+    const H = this.waveCanvas.height;
+    this._audioLevel = 0;
 
-    this.updateState('thinking');
+    const draw = () => {
+      ctx.clearRect(0, 0, W, H);
+      const bars = 52;
+      const step = W / bars;
+      const lvl  = this._audioLevel || 0;
+
+      for (let i = 0; i < bars; i++) {
+        const dist  = Math.abs(i - bars / 2) / (bars / 2);
+        const fade  = Math.max(0.08, 1 - dist * 0.85);
+        const noise = Math.sin(performance.now() * 0.009 + i * 0.45) * 0.35 + 0.65;
+        const bH    = Math.max(2, fade * lvl * 30 * noise + (fade * 2.5));
+
+        const x = i * step + 1.5;
+        const y = (H - bH) / 2;
+
+        // Alternate red / amber colour per bar
+        ctx.fillStyle = i % 3 === 0 ? '#ffb703' : '#ff1a40';
+        ctx.shadowColor = '#ff1a40';
+        ctx.shadowBlur  = 5;
+        ctx.fillRect(x, y, step - 2.5, bH);
+        ctx.shadowBlur  = 0;
+      }
+      requestAnimationFrame(draw);
+    };
+    draw();
   }
 }
 
-// Global functions for inline HTML event handlers
-const controller = new EzraClientController();
+/* ──────────────────────────────────────────────
+   GLOBALS — bridge for inline HTML handlers
+────────────────────────────────────────────── */
+const hud = new EzraHUD();
 
-function sendCommand() {
-  controller.sendCommand();
-}
+function sendCommand() { hud.sendCommand(); }
 
-function executeQuickAction(actionName) {
-  controller.sendMessage({
-    type: 'action',
-    action: actionName
-  });
+function executeQuickAction(name) {
+  hud._send({ type: 'action', action: name });
 }
 
 function toggleMute() {
-  controller.isMuted = !controller.isMuted;
-  const btn = document.getElementById('muteToggleBtn');
+  hud.isMuted = !hud.isMuted;
+  const btn = document.getElementById('muteBtn');
   if (btn) {
-    btn.classList.toggle('active', controller.isMuted);
-    btn.querySelector('.btn-txt').textContent = controller.isMuted ? 'Unmute Voice' : 'Mute Voice';
+    btn.classList.toggle('active', hud.isMuted);
+    btn.querySelector('.act-lbl').textContent = hud.isMuted ? 'Unmute' : 'Mute Voice';
   }
-  controller.sendMessage({
-    type: 'control',
-    action: 'mute',
-    value: controller.isMuted
-  });
+  hud._send({ type: 'control', action: 'mute', value: hud.isMuted });
 }
 
 function toggleRobotic() {
-  controller.isRobotic = !controller.isRobotic;
-  const btn = document.getElementById('robotToggleBtn');
+  hud.isRobotic = !hud.isRobotic;
+  const btn = document.getElementById('robotBtn');
   if (btn) {
-    btn.classList.toggle('active', controller.isRobotic);
-    btn.querySelector('.btn-txt').textContent = controller.isRobotic ? 'Neural Voice' : 'Robot Synth';
+    btn.classList.toggle('active', hud.isRobotic);
+    btn.querySelector('.act-lbl').textContent = hud.isRobotic ? 'Neural Voice' : 'Robot Mode';
   }
-  controller.sendMessage({
-    type: 'control',
-    action: 'robotic_voice',
-    value: controller.isRobotic
-  });
+  hud._send({ type: 'control', action: 'robotic_voice', value: hud.isRobotic });
 }
 
 function toggleSleep() {
-  controller.isSleeping = !controller.isSleeping;
-  const btn = document.getElementById('sleepToggleBtn');
+  hud.isSleeping = !hud.isSleeping;
+  const btn = document.getElementById('sleepBtn');
   if (btn) {
-    btn.classList.toggle('active', controller.isSleeping);
-    btn.querySelector('.sleep-txt').textContent = controller.isSleeping ? 'WAKE' : 'STANDBY';
+    btn.classList.toggle('active', hud.isSleeping);
+    btn.querySelector('.sleep-lbl').textContent = hud.isSleeping ? 'WAKE' : 'STANDBY';
   }
-  controller.sendMessage({
-    type: 'control',
-    action: 'sleep',
-    value: controller.isSleeping
-  });
+  hud._send({ type: 'control', action: 'sleep', value: hud.isSleeping });
 }
 
 function changeVolume(val) {
-  controller.sendMessage({
-    type: 'control',
-    action: 'volume',
-    value: parseInt(val, 10)
-  });
+  if (hud.volVal) hud.volVal.textContent = val;
+  hud._send({ type: 'control', action: 'volume', value: parseInt(val, 10) });
 }
