@@ -5,9 +5,19 @@ import shutil
 from pathlib import Path
 from config.settings import CACHE_DIR
 
+import sys
+import types
+
 # Ensure DISPLAY variable exists to prevent mouseinfo crash on headless/Wayland
 if "DISPLAY" not in os.environ and "WAYLAND_DISPLAY" not in os.environ:
     os.environ["DISPLAY"] = ":0"
+
+# Stub mouseinfo to prevent its sys.exit() crash on Linux systems lacking tkinter
+if "mouseinfo" not in sys.modules:
+    mock_mouseinfo = types.ModuleType("mouseinfo")
+    mock_mouseinfo.position = lambda: (0, 0)
+    mock_mouseinfo.MouseInfoWindow = lambda: None
+    sys.modules["mouseinfo"] = mock_mouseinfo
 
 try:
     import pyautogui

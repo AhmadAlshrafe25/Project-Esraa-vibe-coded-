@@ -23,8 +23,8 @@ def print_banner():
     print("\033[1;33m[!] Tap ENTER or SPACE to interrupt Ezra at any time!\033[0m")
     print("-" * 65 + "\n")
 
-async def handle_turn(text: str) -> dict:
-    """Processes a user turn: think → speak. Clean conversational flow, no animations."""
+async def handle_turn(text: str, speaker_tier: str = "verified") -> dict:
+    """Processes a user turn: think → speak. Clean conversational flow with biometric security."""
     clean = text.lower().strip()
     is_sleep_command = (
         clean in ("stop listening", "exit conversation", "quit conversation", "goodbye ezra", "bye ezra", "sleep ezra", "shut down", "go to sleep", "sleep", "be quiet")
@@ -39,9 +39,9 @@ async def handle_turn(text: str) -> dict:
 
     print(f"\n\033[1;34m[You]:\033[0m {text}")
 
-    # Simple thinking indicator — no intrusive animations
+    # Simple thinking indicator
     print("\033[1;33m  ... thinking\033[0m", end="", flush=True)
-    response = await brain_service.think(text)
+    response = await brain_service.think(text, speaker_tier=speaker_tier)
     print("\r\033[K", end="", flush=True)  # Clear the "thinking" line
 
     reply_speech = response.get("speech_text", "")
@@ -70,50 +70,125 @@ def run_voice_enrollment():
     print("\033[1;32m[🎙️ Ready — Speak now!]\033[0m")
     
     audio_file = stt_engine.record_until_finished(max_wait_sec=12.0, silence_threshold_sec=1.5)
-    if not audio_file or not stt_engine.last_spk_vector:
+    pcm = stt_engine.get_last_pcm()
+    if not pcm or len(pcm) < 16000:
         print("\033[1;31m[-] Calibration incomplete: No vocal profile captured. Please speak a little louder.\033[0m\n")
         return
 
     try:
-        import wave
-        with wave.open(audio_file, "rb") as wf:
-            pcm = wf.readframes(wf.getnframes())
-        
-        voice_dna.enroll(stt_engine.last_spk_vector, pcm_data=pcm, user_name="Beat")
-        msg = f"Voice genetic code successfully locked in! Vocal profile calibrated. I will now strictly ignore all other voices around you."
-        print(f"\n\033[1;32m[+] SUCCESS: Genetic profile locked for {voice_dna.get_user_name()} (F0: {voice_dna.f0_mean:.1f}Hz, Threshold: {voice_dna.get_threshold():.0%})\033[0m\n")
-        voice_speaker.speak(msg)
+        success = voice_dna.enroll(pcm_data=pcm, user_name="Ahmad")
+        if success:
+            msg = f"Voice biometrics locked in for {voice_dna.get_user_name()}! F0 pitch calibrated at {voice_dna.f0_mean:.1f}Hz."
+            print(f"\n\033[1;32m[+] SUCCESS: Biometric profile calibrated for {voice_dna.get_user_name()}!\033[0m\n")
+            voice_speaker.speak(msg)
+        else:
+            print("\033[1;31m[-] Calibration failed. Please try again.\033[0m\n")
     except Exception as e:
         print(f"\033[1;31m[-] Calibration error: {e}\033[0m\n")
 
-def continuous_conversation_loop():
-    """Continuous conversation loop: dynamically listens until you finish speaking, replies, and immediately resumes listening!"""
-    print("\n\033[1;32m[⚡ CONTINUOUS CONVERSATION ACTIVE]\033[0m Speak freely! Tap ENTER or SPACE to interrupt, say 'stop listening' or press Ctrl+C to pause.\n")
+def check_wake_word(text: str) -> tuple:
+    """Checks if text begins with or contains a wake word (Ezra / عزرا)."""
+    import re
+    if not text:
+        return False, ""
+    low = text.lower().strip()
     
+    # English patterns: 'Ezra', 'Hey Ezra', 'Hi Ezra', 'Yo Ezra', 'Ok Ezra'
+    m_en = re.search(r"^(?:(?:hey|hi|yo|ok|okay)\s+)?ezra[\s,.:;]*(.*)$", low, re.IGNORECASE)
+    if m_en:
+        return True, m_en.group(1).strip()
+
+    # Arabic patterns: 'عزرا', 'يا عزرا', 'ابو عزرا'
+    m_ar = re.search(r"^(?:(?:يا|ابو|أبو|أهلا|اهلا)\s+)?عزرا[\s,.:;]*(.*)$", low)
+    if m_ar:
+        return True, m_ar.group(1).strip()
+
+    return False, ""
+
+def continuous_conversation_loop():
+    """
+    Continuous conversation loop with:
+    1. Wake-word activation ('Ezra' / 'عزرا')
+    2. 3-minute conversational dwell timer (Musa architecture)
+    3. 3-Tier biometric speaker verification (Verified / Unsure / Guest)
+    4. Auto-sleep after 3 minutes idle, or instant sleep on 'اسكت' / 'go to sleep'
+    """
+    import re
+    from jarvis.voice.biometrics import voice_dna
+
+    DWELL_TIMEOUT_SEC = 180.0  # 3 minutes dwell window
+    is_awake = False
+    last_interaction_time = 0.0
+
+    print("\n\033[1;32m╔═══════════════════════════════════════════════════════════════╗\033[0m")
+    print("\033[1;32m║          ⚡ HANDS-FREE INTELLIGENT CONVERSATION ENGINE        ║\033[0m")
+    print("\033[1;32m╚═══════════════════════════════════════════════════════════════╝\033[0m")
+    print("\033[1;36m[•] Standby Mode:\033[0m Say \033[1;33m'Ezra'\033[0m or \033[1;33m'عزرا'\033[0m to wake.")
+    print("\033[1;36m[•] Dwell Window:\033[0m Stays awake for 3 minutes without repeating wake words.")
+    print("\033[1;36m[•] Sleep Command:\033[0m Say \033[1;31m'go to sleep'\033[0m or \033[1;31m'اسكت'\033[0m to return to standby.")
+    print("\033[1;36m[•] Interrupt:\033[0m Tap ENTER or SPACE anytime to interrupt.\n")
+
     while True:
         try:
+            # Check dwell timeout if currently awake
+            if is_awake and (time.time() - last_interaction_time > DWELL_TIMEOUT_SEC):
+                is_awake = False
+                timeout_msg = "Three minutes idle. Entering standby mode, sir. Say 'Ezra' anytime."
+                print(f"\n\033[1;33m[Standby]:\033[0m {timeout_msg}\n")
+                voice_speaker.speak(timeout_msg)
+
+            # Record turn from microphone
             audio_file = stt_engine.record_until_finished(max_wait_sec=15.0, silence_threshold_sec=0.65)
-            
             if not audio_file:
                 time.sleep(0.04)
                 continue
 
             transcription = stt_engine.transcribe_audio_file(audio_file)
             print("\r\033[K", end="", flush=True)
-            
-            if not transcription or not transcription.strip():
-                continue
 
-            turn_res = asyncio.run(handle_turn(transcription))
-            should_continue = turn_res.get("should_continue", True) if isinstance(turn_res, dict) else turn_res
-            if not should_continue:
-                break
+            pcm_data = stt_engine.get_last_pcm()
 
-            # If user cut Ezra off to speak, immediately record next speech without delay
-            if isinstance(turn_res, dict) and turn_res.get("was_interrupted"):
-                time.sleep(0.05)
+            # Speaker biometrics evaluation (3-tier security)
+            tier, score, detail = voice_dna.verify_turn(pcm_data, transcription)
+
+            if not is_awake:
+                # In standby: check for wake word
+                has_wake, command = check_wake_word(transcription)
+                if not has_wake:
+                    # Discard background room noise or chatter silently
+                    continue
+
+                is_awake = True
+                last_interaction_time = time.time()
+                print(f"\n\033[1;32m[⚡ WAKE TRIGGERED]\033[0m Biometrics: {tier.upper()} ({score:.2f})")
+
+                if command:
+                    # Execute command directly with speaker tier
+                    turn_res = asyncio.run(handle_turn(command, speaker_tier=tier))
+                    last_interaction_time = time.time()
+                    if isinstance(turn_res, dict) and not turn_res.get("should_continue", True):
+                        is_awake = False
+                else:
+                    # User just said "Ezra" -> acknowledge and listen
+                    has_ar = bool(re.search(r"[\u0600-\u06FF]", transcription))
+                    greet = "أهلاً بك يا سيدي، في خدمتك دائماً." if has_ar else "Good day, sir. At your command."
+                    voice_speaker.speak(greet, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
             else:
-                time.sleep(0.12)
+                # Currently awake (Active 3-minute dwell mode)
+                if not transcription or not transcription.strip():
+                    # Heard voice energy but transcription was empty/noise
+                    fallback = "Sorry, I lost that, could you say it again?"
+                    voice_speaker.speak(fallback, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
+                    continue
+
+                # Process turn
+                turn_res = asyncio.run(handle_turn(transcription, speaker_tier=tier))
+                last_interaction_time = time.time()
+                should_continue = turn_res.get("should_continue", True) if isinstance(turn_res, dict) else turn_res
+                if not should_continue:
+                    is_awake = False
+
+            time.sleep(0.08)
 
         except KeyboardInterrupt:
             print("\n\033[1;33m[Conversation paused. Press ENTER to resume.]\033[0m\n")

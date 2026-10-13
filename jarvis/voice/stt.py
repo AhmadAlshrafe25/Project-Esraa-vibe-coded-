@@ -381,6 +381,7 @@ class NativeSpeechRecognizer:
 
         # Write clean 16000Hz 16-bit PCM WAV file
         pcm_bytes = b"".join(recorded_frames)
+        self.last_pcm_bytes = pcm_bytes
         with wave.open(str(wav_file), "wb") as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)
@@ -388,6 +389,10 @@ class NativeSpeechRecognizer:
             wf.writeframes(pcm_bytes)
 
         return str(wav_file)
+
+    def get_last_pcm(self) -> bytes:
+        """Returns raw PCM byte buffer of the most recent recorded turn."""
+        return getattr(self, "last_pcm_bytes", b"")
 
     def transcribe_audio_file(self, audio_path: str) -> str:
         """

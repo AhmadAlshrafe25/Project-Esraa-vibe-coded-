@@ -68,9 +68,15 @@ class BrainEngine:
         self.gemini_key = settings.GEMINI_API_KEY
         self.groq_key = settings.GROQ_API_KEY
 
-    async def execute_tool(self, tool_name: str, args: Dict[str, Any], user_context: str = "") -> str:
-        """Executes system or desktop action."""
+    async def execute_tool(self, tool_name: str, args: Dict[str, Any], user_context: str = "", speaker_tier: str = "verified") -> str:
+        """Executes system or desktop action with biometric permission gating."""
         try:
+            # Biometric access gate: verify permissions for current speaker tier
+            from jarvis.voice.biometrics import voice_dna
+            permitted, reason = voice_dna.is_action_permitted(tool_name, speaker_tier)
+            if not permitted:
+                return json.dumps({"status": "error", "message": reason})
+
             if tool_name == "inspect_screen":
                 vision_analysis = screen_vision.analyze_screen(args.get("instruction", "Describe what is on screen"))
                 res = {"status": "success", "message": vision_analysis, "screen_vision": vision_analysis}
@@ -231,8 +237,8 @@ class BrainEngine:
 
         return None
 
-    async def think(self, user_message: str) -> Dict[str, Any]:
-        """Main LLM reasoning loop with instant reflexes and fast fallback."""
+    async def think(self, user_message: str, speaker_tier: str = "verified") -> Dict[str, Any]:
+        """Main LLM reasoning loop with instant reflexes, biometric access gate, and fast fallback."""
         self.reload_keys()
 
         # Save user query to persistent memory
@@ -253,14 +259,14 @@ class BrainEngine:
         # 1. Attempt Gemini (Free on Google AI Studio)
         if self.gemini_key:
             try:
-                output = await self._call_gemini(user_message, prompt)
+                output = await self._call_gemini(user_message, prompt, speaker_tier=speaker_tier)
             except Exception as e:
                 print(f"[Brain] Gemini error: {e}")
 
         # 2. Attempt Groq fallback
         if not output and self.groq_key:
             try:
-                output = await self._call_groq(user_message, prompt)
+                output = await self._call_groq(user_message, prompt, speaker_tier=speaker_tier)
             except Exception as e:
                 print(f"[Brain] Groq error: {e}")
 
@@ -276,7 +282,7 @@ class BrainEngine:
         asyncio.create_task(memory_service.auto_learn_from_interaction(user_message, reply_speech))
         return output
 
-    async def _call_gemini(self, user_message: str, system_prompt: str) -> Dict[str, Any]:
+    async def _call_gemini(self, user_message: str, system_prompt: str, speaker_tier: str = "verified") -> Dict[str, Any]:
         candidate_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.0-flash-lite"]
         
         recent = memory_service.get_recent_history(6)
@@ -303,14 +309,14 @@ class BrainEngine:
                             data = await resp.json()
                             if "candidates" in data and data["candidates"]:
                                 reply_text = data["candidates"][0]["content"]["parts"][0]["text"]
-                                return await self._process_tool_calls_in_text(reply_text, user_context=user_message)
+                                return await self._process_tool_calls_in_text(reply_text, user_context=user_message, speaker_tier=speaker_tier)
                         elif resp.status in (404, 400):
                             continue  # Try next model in candidate list
                 except Exception:
                     continue
         raise Exception("All Gemini candidate models failed to respond.")
 
-    async def _call_groq(self, user_message: str, system_prompt: str) -> Dict[str, Any]:
+    async def _call_groq(self, user_message: str, system_prompt: str, speaker_tier: str = "verified") -> Dict[str, Any]:
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {"Authorization": f"Bearer {self.groq_key}"}
         payload = {
@@ -326,11 +332,11 @@ class BrainEngine:
                 data = await resp.json()
                 if "choices" in data:
                     reply_text = data["choices"][0]["message"]["content"]
-                    return await self._process_tool_calls_in_text(reply_text, user_context=user_message)
+                    return await self._process_tool_calls_in_text(reply_text, user_context=user_message, speaker_tier=speaker_tier)
                 else:
                     raise Exception(f"Groq API returned error: {data}")
 
-    async def _process_tool_calls_in_text(self, reply_text: str, user_context: str = "") -> Dict[str, Any]:
+    async def _process_tool_calls_in_text(self, reply_text: str, user_context: str = "", speaker_tier: str = "verified") -> Dict[str, Any]:
         pattern = r"```tool_call\s*(.*?)\s*```"
         matches = re.findall(pattern, reply_text, re.DOTALL)
         
@@ -338,7 +344,7 @@ class BrainEngine:
         for match in matches:
             try:
                 call_data = json.loads(match.strip())
-                res = await self.execute_tool(call_data["tool"], call_data.get("args", {}), user_context=user_context)
+                res = await self.execute_tool(call_data["tool"], call_data.get("args", {}), user_context=user_context, speaker_tier=speaker_tier)
                 tool_results.append({"tool": call_data["tool"], "result": json.loads(res)})
             except Exception as e:
                 tool_results.append({"error": str(e)})
