@@ -1,4 +1,6 @@
 import os
+import sys
+import select
 import re
 import time
 import math
@@ -361,14 +363,29 @@ class NativeSpeechRecognizer:
                         recorded_frames.append(chunk)
                         silence_chunks += 1
                         print(f"\r\033[1;32m[🎙 Heard You   |{meter_bar}|]\033[0m\033[K", end="", flush=True)
-                        if silence_chunks >= max_silence_chunks:
-                            # User naturally finished their sentence!
+
+                        # Dual-Stage Adaptive Endpointing (Zero-Cons Architecture):
+                        # 1. Thinking & Hesitation Guard: If speech is brief (< 1.1s, e.g. "Ezra..."),
+                        #    grant relaxed breathing buffer (~500ms) so user is never cut off mid-thought.
+                        # 2. Snappy Command Cutoff: If user spoke a full command (>= 1.1s),
+                        #    endpoint immediately at ~320ms for instant turnaround.
+                        dynamic_silence_limit = max_silence_chunks if speech_chunks_count >= 14 else max(max_silence_chunks, 6)
+                        if silence_chunks >= dynamic_silence_limit:
                             break
                     else:
                         pre_buffer.append(chunk)
                         print(f"\r\033[1;36m[🎙 Listening   |{meter_bar}|]\033[0m\033[K", end="", flush=True)
                         if time.time() - start_time > max_wait_sec:
                             break
+
+                # Instant manual cutoff: if user taps ENTER in terminal while speaking, process instantly
+                try:
+                    if select.select([sys.stdin], [], [], 0)[0]:
+                        sys.stdin.readline()
+                        if is_speaking:
+                            break
+                except Exception:
+                    pass
 
         finally:
             print("\r\033[K", end="", flush=True)
