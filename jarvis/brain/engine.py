@@ -20,7 +20,7 @@ SOUL_FILE = PROJECT_ROOT / "SOUL.md"
 
 ALL_TOOLS_LIST = (
     "inspect_screen, click_screen_element, type_message, dictate_text, press_key, press_hotkey, "
-    "toggle_voice, get_weather, get_crypto_price, get_exchange_rate, search_wikipedia, get_network_info, "
+    "toggle_voice, set_voice_mode, get_weather, get_crypto_price, get_exchange_rate, search_wikipedia, get_network_info, "
     "get_tech_news, get_github_info, open_tab, search_web, play_youtube, launch_app, close_app, "
     "send_discord_message, take_screenshot, media_control, get_system_status, set_volume, remember_fact, "
     "execute_shell_command, send_email, send_telegram, get_daily_briefing, send_desktop_notification, "
@@ -182,6 +182,12 @@ class BrainEngine:
             elif tool_name == "deep_research":
                 q = args.get("query", "") or args.get("topic", "") or user_context
                 res = await ResearchSubAgent.deep_research(q)
+            elif tool_name == "set_voice_mode":
+                mode = args.get("mode", "robotic").lower()
+                is_robot = "robot" in mode or "synth" in mode
+                voice_speaker.set_robotic_mode(is_robot)
+                m_str = "cybernetic robotic mode" if is_robot else "natural neural voice"
+                res = {"status": "success", "message": f"Voice switched to {m_str}, sir."}
             else:
                 res = {"status": "error", "message": f"Unknown tool: {tool_name}"}
             return json.dumps(res)
@@ -552,6 +558,20 @@ class BrainEngine:
             return {
                 "speech_text": "Voice restored, sir. Ready and listening.",
                 "tool_calls": [{"tool": "toggle_voice", "result": {"status": "success", "message": "Voice unmuted"}}]
+            }
+
+        if any(w in msg for w in ("robot voice", "robotic voice", "robot mode", "صوت روبوت", "صوت آلي")):
+            voice_speaker.set_robotic_mode(True)
+            return {
+                "speech_text": "Robotic cybernetic synthesis module activated, sir.",
+                "tool_calls": [{"tool": "set_voice_mode", "result": {"mode": "robotic"}}]
+            }
+
+        if any(w in msg for w in ("neural voice", "normal voice", "smooth voice", "human voice", "صوت طبيعي", "صوت عادي")):
+            voice_speaker.set_robotic_mode(False)
+            return {
+                "speech_text": "Silky neural voice restored, sir.",
+                "tool_calls": [{"tool": "set_voice_mode", "result": {"mode": "neural"}}]
             }
 
         if msg.startswith("type ") or msg.startswith("dictate ") or msg.startswith("write "):

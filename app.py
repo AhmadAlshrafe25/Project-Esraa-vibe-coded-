@@ -15,7 +15,12 @@ BANNER = """\033[1;36m
 
 def print_banner():
     from config.settings import TELEGRAM_BOT_TOKEN
-    voice_status = "\033[1;31mMuted (Silent Mode)\033[0m" if voice_speaker.is_muted else "\033[1;32mActive (Silky Neural)\033[0m"
+    if voice_speaker.is_muted:
+        voice_status = "\033[1;31mMuted (Silent Mode)\033[0m"
+    elif voice_speaker.robotic_mode:
+        voice_status = "\033[1;36mActive (Cybernetic Robot Synth)\033[0m"
+    else:
+        voice_status = "\033[1;32mActive (Silky Neural JARVIS)\033[0m"
     tg_status = "\033[1;32mActive (Remote Control Ready)\033[0m" if TELEGRAM_BOT_TOKEN else "\033[1;33mStandby (Configure in .env)\033[0m"
     print(BANNER)
     print("\033[1;32m[+] Engine:\033[0m Ultra-Fast Neural Core (Direct Voice Stream)")
@@ -261,8 +266,20 @@ def main():
 
             if user_choice.lower() in ("/unmute", "unmute"):
                 voice_speaker.set_muted(False)
-                print("\033[1;32m[Ezra Voice: Active (Silky Neural Voice Enabled)]\033[0m\n")
+                print("\033[1;32m[Ezra Voice: Active]\033[0m\n")
                 voice_speaker.speak("Voice restored, sir.")
+                continue
+
+            if user_choice.lower() in ("/robot", "/robotic", "robot"):
+                voice_speaker.set_robotic_mode(True)
+                print("\033[1;36m[Ezra Voice: Cybernetic Robot Synth Active]\033[0m\n")
+                voice_speaker.speak("Robotic synthesis module activated, sir.")
+                continue
+
+            if user_choice.lower() in ("/neural", "/smooth", "/human", "neural"):
+                voice_speaker.set_robotic_mode(False)
+                print("\033[1;32m[Ezra Voice: Silky Neural JARVIS Active]\033[0m\n")
+                voice_speaker.speak("Neural voice restored, sir.")
                 continue
 
             if user_choice.lower() in ("/enroll", "/calibrate", "/voiceprint"):

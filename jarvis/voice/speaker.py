@@ -38,7 +38,37 @@ class SmoothSpeaker:
         self.is_muted: bool = False
         self.is_speaking: bool = False
         self.is_interrupted: bool = False
+        self.robotic_mode: bool = os.getenv("ROBOTIC_VOICE", "false").lower() in ("true", "1", "yes")
         self._active_proc = None
+
+    def set_robotic_mode(self, enabled: bool):
+        """Switches between Cybernetic Robotic voice and Silky Neural voice."""
+        self.robotic_mode = bool(enabled)
+
+    def toggle_robotic_mode(self) -> bool:
+        """Toggles between Cybernetic Robotic voice and Silky Neural voice."""
+        self.robotic_mode = not self.robotic_mode
+        return self.robotic_mode
+
+    def _apply_robotic_filter(self, audio_path: str) -> str:
+        """Applies a cybernetic metallic vocoder/flanger acoustic filter via ffmpeg."""
+        if not self.robotic_mode or not shutil.which("ffmpeg") or not audio_path:
+            return audio_path
+        try:
+            p = Path(audio_path)
+            out_path = p.parent / f"robot_{p.name}"
+            if out_path.exists() and out_path.stat().st_size > 500:
+                return str(out_path)
+
+            cmd = [
+                "ffmpeg", "-y", "-i", str(audio_path),
+                "-af", "chorus=0.7:0.9:35:0.4:0.25:2,flanger=delay=4:depth=6:regen=45:speed=6,equalizer=f=900:t=q:w=1.2:g=5,equalizer=f=3000:t=q:w=1.5:g=6",
+                str(out_path)
+            ]
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return str(out_path)
+        except Exception:
+            return audio_path
 
     def set_muted(self, muted: bool):
         """Sets mute state. When True, Ezra outputs purely text without speaking aloud."""
@@ -221,25 +251,36 @@ class SmoothSpeaker:
         has_arabic = bool(re.search(r"[\u0600-\u06FF]", clean_text))
         voices_to_try = ["ar-JO-SanaNeural", "ar-EG-SalmaNeural"] if has_arabic else [self.voice, self.fallback_voice]
 
+        audio_file = ""
         for v in voices_to_try:
             try:
-                cache_key = hashlib.md5(f"{v}_{clean_text}".encode("utf-8")).hexdigest()[:12]
+                target_v = "en-GB-RyanNeural" if (self.robotic_mode and not has_arabic) else v
+                cache_key = hashlib.md5(f"{target_v}_{clean_text}_{self.robotic_mode}".encode("utf-8")).hexdigest()[:12]
                 cached_file = CACHE_DIR / f"smooth_{cache_key}.mp3"
                 if cached_file.exists() and cached_file.stat().st_size > 500:
-                    return str(cached_file)
+                    audio_file = str(cached_file)
+                    break
 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    audio_file = pool.submit(asyncio.run, self._generate_edge_speech(clean_text, v)).result(timeout=10.0)
-                if audio_file and os.path.exists(audio_file):
-                    return audio_file
+                    generated = pool.submit(asyncio.run, self._generate_edge_speech(clean_text, target_v)).result(timeout=10.0)
+                if generated and os.path.exists(generated):
+                    audio_file = generated
+                    break
             except Exception:
                 continue
 
         # Secondary fallback: Google TTS
-        try:
-            return self._generate_google_tts(clean_text)
-        except Exception:
-            return ""
+        if not audio_file or not os.path.exists(audio_file):
+            try:
+                audio_file = self._generate_google_tts(clean_text)
+            except Exception:
+                audio_file = ""
+
+        # Apply cybernetic robotic DSP vocoder filter if enabled
+        if audio_file and self.robotic_mode:
+            audio_file = self._apply_robotic_filter(audio_file)
+
+        return audio_file
 
     def speak(self, text: str, prefix: str = "", live_print: bool = True) -> bool:
         """Speaks with smooth, human neural voice with instant sentence-by-sentence streaming

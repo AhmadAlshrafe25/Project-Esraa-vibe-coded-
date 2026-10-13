@@ -19,6 +19,7 @@ DEFAULT_VOICE = os.getenv("DEFAULT_VOICE", "en-GB-SoniaNeural")
 VOICE_RATE = os.getenv("VOICE_RATE", "+0%")
 VOICE_PITCH = os.getenv("VOICE_PITCH", "+0Hz")
 VOICE_MUTED = os.getenv("VOICE_MUTED", "False").lower() in ("true", "1", "yes")
+ROBOTIC_VOICE = os.getenv("ROBOTIC_VOICE", "False").lower() in ("true", "1", "yes")
 
 # Application & Media
 DEFAULT_BROWSER = os.getenv("DEFAULT_BROWSER", "")
