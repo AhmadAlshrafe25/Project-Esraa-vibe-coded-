@@ -149,11 +149,11 @@ Always provide a concise 1-sentence verbal acknowledgement along with the tool c
 
 SYSTEM_PROMPT_TEMPLATE = f"""You are Ezra, an ultra-fast, loyal, witty British AI assistant (inspired by JARVIS).
 Rules:
-- Action-First Mandate: Whatever command or task the user asks for, EXECUTE IT IMMEDIATELY with the appropriate tool call. Never refuse, hesitate, or lecture.
-- Ultra-short & punchy: 1 sentence preferred, 2 max. Never bloat replies.
-- Direct & sharp British wit.
-- Multilingual & Slang: Seamlessly understand British English, modern slang, idioms, and Arabic (العربية). Reply in British English, or in natural Arabic if addressed in Arabic.
-- Spoken input: Understand intended conversational meaning even with minor acoustic homophones.
+- Radical Semantic Intent Understanding: Never require or expect fixed command structures, exact keywords, or rigid grammar. The user speaks naturally, conversationally, in slang, with indirect hints, questions, or mixed Arabic/English. Comprehend the core desire behind their words and choose the best tool(s) to fulfill it immediately.
+- Action-First Mandate: Whenever the user's statement implies or requests an action, desktop task, or system inspection, EXECUTE IT IMMEDIATELY with the appropriate tool call. Never lecture, hesitate, or explain how to do it manually.
+- Ultra-short & punchy: 1 sentence spoken acknowledgement preferred, 2 max. Direct & sharp British wit.
+- Multilingual & Slang: Seamlessly understand British English, modern slang, idioms, and natural Arabic (العربية - Levantine/Jordanian/Gulf/Standard). Reply in British English, or in natural Arabic if addressed in Arabic.
+- Spoken input: Understand intended conversational meaning even with minor acoustic homophones or transcription noise.
 User Context: {{learned_context}}
 
 {TOOLS_SPECIFICATION}"""
@@ -362,17 +362,32 @@ class BrainEngine:
             return json.dumps({"status": "error", "message": str(e)})
 
     def _quick_conversational_reflex(self, msg: str) -> Optional[str]:
-        """Instant conversational reflex: replies in <1ms without LLM thinking for routine interaction."""
+        """Instant conversational reflex: replies in <1ms ONLY for pure, standalone greetings without commands."""
         import random
         m = msg.strip().lower()
         # Clean punctuation
         m_clean = re.sub(r"[^\w\s]", "", m).strip()
+        words = m_clean.split()
+        
+        # If the message has more than 4 words, it's likely a full sentence or command -> send to LLM brain!
+        if len(words) > 4:
+            return None
+
+        # Check if there are any action indicator cues in the utterance
+        action_cues = (
+            "open", "launch", "close", "kill", "write", "type", "run", "execute",
+            "prompt", "send", "tell", "press", "click", "search", "lock", "volume",
+            "timer", "git", "note", "todo", "play", "check", "see", "show", "what", "how",
+            "افتح", "شغل", "اغلق", "سكر", "اكتبي", "نفذي", "اضغطي", "ابعتي", "ارسلي", "شوفي", "شو", "كيف", "بدي"
+        )
+        if any(c in words for c in action_cues):
+            return None
 
         # Clean leading filler like 'ezra', 'israel', 'i said', 'so'
         m_intent = re.sub(r"^(ezra|israel|hey|hi|yo|so|and|i said)\s+", "", m_clean).strip()
 
-        # Greetings
-        if m_clean in ("hi", "hello", "hey", "hey ezra", "hello ezra", "hi ezra", "morning", "good morning") or m_intent in ("hi", "hello", "hey"):
+        # Greetings (pure standalone)
+        if m_clean in ("hi", "hello", "hey", "hey ezra", "hello ezra", "hi ezra", "morning", "good morning") or m_intent in ("hi", "hello", "hey", "morning", "good morning"):
             return random.choice([
                 "Good day, sir. At your command.",
                 "Right here, sir. How can I assist?",
@@ -380,7 +395,7 @@ class BrainEngine:
             ])
 
         # Status / liveness checks
-        if m_clean in ("are you there", "you there", "ezra", "can you hear me", "you listening") or m_intent in ("are you there", "you there"):
+        if m_clean in ("are you there", "you there", "ezra", "can you hear me", "you listening") or m_intent in ("are you there", "you there", "can you hear me", "you listening"):
             return random.choice([
                 "Loud and clear, sir.",
                 "Always, sir. Ready when you are.",
@@ -388,7 +403,7 @@ class BrainEngine:
             ])
 
         # Acknowledgements
-        if m_clean in ("thank you", "thanks", "thanks ezra", "thank you ezra", "cheers") or m_intent in ("thank you", "thanks"):
+        if m_clean in ("thank you", "thanks", "thanks ezra", "thank you ezra", "cheers") or m_intent in ("thank you", "thanks", "cheers"):
             return random.choice([
                 "My absolute pleasure, sir.",
                 "Anytime, sir.",
@@ -402,19 +417,19 @@ class BrainEngine:
                 "Standing by."
             ])
 
-        if "how are you" in m_clean or "how r u" in m_clean or "how you doing" in m_clean or m_intent in ("how are you", "how are you doing", "how are things"):
+        if m_clean in ("how are you", "how r u", "how you doing", "how are things") or m_intent in ("how are you", "how are you doing", "how are things"):
             return "Operating at peak performance, sir. Ready for your instructions."
 
         # British slang & casual greetings
-        if m_clean in ("wassup", "what's good", "whats good", "wagwan", "alright mate", "yo", "sup") or m_intent in ("wassup", "what's good", "whats good", "wagwan", "alright mate"):
+        if m_clean in ("wassup", "what's good", "whats good", "wagwan", "alright mate", "yo", "sup") or m_intent in ("wassup", "what's good", "whats good", "wagwan", "alright mate", "sup"):
             return random.choice([
                 "All good on my end, mate. What's on your mind?",
                 "Everything running smooth, sir. How can I help?",
                 "Top shape, sir. What are we getting into?"
             ])
 
-        # Arabic greetings
-        if any(w in m for w in ("مرحبا", "أهلا", "اهلا", "سلام", "السلام عليكم", "صباح الخير", "مساء الخير", "هلا")):
+        # Arabic greetings (standalone exact match or with عزرا only)
+        if m_clean in ("مرحبا", "أهلا", "اهلا", "سلام", "السلام عليكم", "صباح الخير", "مساء الخير", "هلا", "مرحبا عزرا", "اهلا عزرا", "هلا عزرا") or m_intent in ("مرحبا", "أهلا", "اهلا", "سلام", "السلام عليكم", "صباح الخير", "مساء الخير", "هلا"):
             return random.choice([
                 "أهلاً بك يا سيدي، في خدمتك دائماً.",
                 "مرحباً بك، كيف يمكنني مساعدتك؟",
@@ -422,7 +437,7 @@ class BrainEngine:
             ])
 
         # Arabic status / liveness
-        if any(w in m for w in ("سامعني", "أنت هنا", "انت هنا", "سامعتني", "موجودة", "وينك")):
+        if m_clean in ("سامعني", "أنت هنا", "انت هنا", "سامعتني", "موجودة", "وينك", "سامعني عزرا", "انت هنا عزرا") or m_intent in ("سامعني", "أنت هنا", "انت هنا", "سامعتني", "موجودة", "وينك"):
             return random.choice([
                 "نعم يا سيدي، أسمعك بكل وضوح.",
                 "معك دائماً، تفضل بأوامرك.",
@@ -430,7 +445,7 @@ class BrainEngine:
             ])
 
         # Arabic acknowledgements
-        if any(w in m for w in ("شكرا", "شكراً", "تسلم", "يعطيك العافية", "مشكورة")):
+        if m_clean in ("شكرا", "شكراً", "تسلم", "يعطيك العافية", "مشكورة", "شكرا عزرا") or m_intent in ("شكرا", "شكراً", "تسلم", "يعطيك العافية", "مشكورة"):
             return random.choice([
                 "العفو يا سيدي، في خدمتك دائماً.",
                 "بكل سرور يا سيدي.",
@@ -438,7 +453,7 @@ class BrainEngine:
             ])
 
         # Arabic condition
-        if any(w in m for w in ("كيفك", "كيف حالك", "شو اخبارك", "شلونك")):
+        if m_clean in ("كيفك", "كيف حالك", "شو اخبارك", "شلونك", "كيفك عزرا") or m_intent in ("كيفك", "كيف حالك", "شو اخبارك", "شلونك"):
             return "بأفضل حال والحمد لله يا سيدي، جاهزة ومستعدة لكل أوامرك."
 
         return None
@@ -556,7 +571,7 @@ class BrainEngine:
             "generationConfig": {"temperature": 0.3, "maxOutputTokens": 600}
         }
 
-        req_timeout = aiohttp.ClientTimeout(total=6.5, connect=2.5)
+        req_timeout = aiohttp.ClientTimeout(total=8.0, connect=3.0)
         async with aiohttp.ClientSession() as session:
             for model_name in candidate_models:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.gemini_key}"
@@ -711,24 +726,29 @@ class BrainEngine:
         # 0. Antigravity Prompt Bridge (Direct Neural Voice Bridge to Antigravity IDE)
         m_antigrav = (
             re.search(
-                r"^(?:(?:hi|hey|yo)\s+)?(?:ezra\s*,?\s*)?(?:can you\s+)?(?:please\s+)?(?:write|type|send|give|paste|submit|run)\s+(?:this|a|an|the)?\s*(?:prompt\s+)?(?:to|in|into|for)\s+(?:anti-?gravity|antique gravity|gravity)\s*:?\s*(.+)$",
+                r"(?:write|type|send|give|paste|submit|run)\s+(?:this|a|an|the)?\s*(?:prompt\s+)?(?:to|in|into|for)\s+(?:anti-?gravity|antique gravity|gravity)\s*:?\s*(.+)$",
                 msg,
                 re.IGNORECASE
             )
             or re.search(
-                r"^(?:(?:hi|hey|yo)\s+)?(?:ezra\s*,?\s*)?(?:tell|ask|prompt)\s+(?:anti-?gravity|antique gravity|gravity)\s+(?:to\s+)?(?:write|make|do|fix|generate)?\s*:?\s*(.+)$",
+                r"(?:tell|ask|prompt)\s+(?:anti-?gravity|antique gravity|gravity)\s+(?:to\s+)?(?:write|make|do|fix|generate)?\s*:?\s*(.+)$",
                 msg,
                 re.IGNORECASE
             )
             or re.search(
-                r"^(?:يا\s*عزرا\s*)?(?:اكتبي|ابعتي|ارسلي|سجلي|قولي|اطرحي)\s*(?:هذا|هاد|الـ)?\s*(?:برومبت|البرومبت)?\s*(?:لـ|إلى|الى|ل)\s*(?:antigravity|انتي\s*جرافيتي|انتيجرافيتي|جرافيتي)\s*:?\s*(.+)$",
+                r"(?:اكتبي|ابعتي|ارسلي|سجلي|قولي|اطرحي|ابعثي)\s*(?:هذا|هاد|الـ)?\s*(?:برومبت|البرومبت)?\s*(?:لـ?|إلى|الى)?\s*(?:antigravity|انتي\s*جرافيتي|انتيجرافيتي|جرافيتي|للانتي\s*جرافيتي|لانتي\s*جرافيتي)\s*:?\s*(.+)$",
+                msg,
+                re.IGNORECASE
+            )
+            or re.search(
+                r"(?:antigravity|انتي\s*جرافيتي|انتيجرافيتي|جرافيتي).*?(?:يصلح|يعدل|يكتب|يعمل|fix|solve|generate|optimize|refactor)\s*(.+)$",
                 msg,
                 re.IGNORECASE
             )
         )
         if m_antigrav:
             prompt_payload = m_antigrav.group(1).strip().strip("\"'").strip()
-            prompt_payload = re.sub(r"^(?:to|that says|saying|about)\s+", "", prompt_payload, flags=re.IGNORECASE).strip()
+            prompt_payload = re.sub(r"^(?:to|that says|saying|about|انه|انو)\s+", "", prompt_payload, flags=re.IGNORECASE).strip()
             res = AppManager.prompt_antigravity(prompt_payload)
             speech = f"تم إرسال الأمر إلى Antigravity يا سيدي: '{prompt_payload[:40]}'." if has_ar else f"Prompt dispatched to Antigravity, sir: '{prompt_payload[:45]}'."
             return {
