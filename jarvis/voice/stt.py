@@ -100,28 +100,28 @@ class AudioStreamWorker:
         return b"".join(chunks)
 
     def _capture_loop(self):
-        # 1. Warm-up & Calibration: Discard initial 2.0s (25 chunks) of hardware connection transient
-        for _ in range(25):
+        # 1. Warm-up & Calibration: 4 chunks (320ms) is plenty to clear connection transients
+        for _ in range(4):
             if not self.running:
                 return
             self._read_exact(self.chunk_size)
 
-        # 2. Measure actual steady-state ambient room noise
+        # 2. Measure actual steady-state ambient room noise (6 chunks = 480ms)
         calib_ac = []
-        for _ in range(12):
+        for _ in range(6):
             if not self.running:
                 return
             raw = self._read_exact(self.chunk_size)
             if not raw:
                 break
             _, ac_val = self._calc_rms_and_clean(raw)
-            if 10.0 < ac_val < 30000.0:
+            if 5.0 < ac_val < 30000.0:
                 calib_ac.append(ac_val)
 
         if calib_ac:
             self.ambient_baseline = float(np.median(calib_ac))
-        if self.ambient_baseline < 50.0:
-            self.ambient_baseline = 200.0
+        if self.ambient_baseline < 25.0:
+            self.ambient_baseline = 60.0
 
         self.calibrated = True
 
@@ -131,7 +131,7 @@ class AudioStreamWorker:
             if not raw:
                 break
 
-            # Check if Ezra is speaking aloud through laptop speakers
+            # Check if Ezra is speaking aloud through speakers or headset
             is_ezra_speaking = False
             try:
                 from jarvis.voice.speaker import voice_speaker
@@ -141,15 +141,15 @@ class AudioStreamWorker:
 
             clean_bytes, ac_rms = self._calc_rms_and_clean(raw)
 
-            # If Ezra is speaking aloud, drain buffer so laptop mic doesn't hear her
+            # If Ezra is speaking aloud, drain buffer so mic doesn't hear her
             if is_ezra_speaking:
                 with self.lock:
                     self.buffer.clear()
                 continue
 
-            # Update ambient noise baseline continuously (ignoring clipping speech >25000)
-            if ac_rms < 25000.0:
-                self.ambient_baseline = 0.96 * self.ambient_baseline + 0.04 * ac_rms
+            # Update ambient noise baseline ONLY during non-speech quiet times!
+            if ac_rms < self.ambient_baseline * 1.35:
+                self.ambient_baseline = 0.98 * self.ambient_baseline + 0.02 * ac_rms
 
             with self.lock:
                 self.buffer.append((clean_bytes, ac_rms))
@@ -300,13 +300,13 @@ class NativeSpeechRecognizer:
         self.last_spk_vector = []
         wav_file = CACHE_DIR / f"mic_{uuid.uuid4().hex[:8]}.wav"
 
-        # Wait for worker calibration before we start listening
-        calib_deadline = time.time() + 6.0
+        # Wait for worker calibration before we start listening (fast 1.5s max)
+        calib_deadline = time.time() + 1.5
         while not self.worker.calibrated and time.time() < calib_deadline:
-            time.sleep(0.05)
+            time.sleep(0.03)
 
-        # Drain stale audio chunks from before listening began (keep 3 chunks = 240ms pre-buffer)
-        self.worker.drain(keep_recent=3)
+        # Drain stale audio chunks from before listening began
+        self.worker.drain(keep_recent=2)
 
         pre_buffer = deque(maxlen=4)  # 320ms pre-speech ring buffer
         recorded_frames = []
@@ -314,11 +314,11 @@ class NativeSpeechRecognizer:
         consecutive_voice_chunks = 0
         speech_chunks_count = 0
         silence_chunks = 0
-        max_silence_chunks = max(6, int(silence_threshold_sec / self.chunk_duration))  # ~8 chunks = 640ms
+        max_silence_chunks = max(5, int(silence_threshold_sec / self.chunk_duration))  # ~6 chunks = 480ms
 
         start_time = time.time()
         speech_start_time = 0.0
-        max_speech_sec = 15.0  # Cap maximum continuous utterance to 15s so it never hangs
+        max_speech_sec = 8.0  # Cap maximum continuous utterance to 8s so it never hangs
 
         try:
             while True:
@@ -331,12 +331,12 @@ class NativeSpeechRecognizer:
 
                 chunk, ac_rms = item
                 baseline = self.worker.ambient_baseline
-                # Sensitive vocal threshold cleanly above room acoustics
-                speech_threshold = max(baseline * 1.25, baseline + 130.0)
+                # Sensitive vocal threshold cleanly above room / headset acoustics
+                speech_threshold = max(baseline * 1.20, baseline + 65.0)
 
                 # Dynamic VU Audio Meter: voice dynamically fills the bar
                 excess = max(0.0, ac_rms - baseline)
-                scale_span = max(baseline * 1.1, 350.0)
+                scale_span = max(baseline * 1.1, 200.0)
                 level = min(10, max(0, int((excess / scale_span) * 10)))
                 meter_bar = "█" * level + "░" * (10 - level)
 
@@ -350,9 +350,7 @@ class NativeSpeechRecognizer:
                     if is_speaking:
                         recorded_frames.append(chunk)
                         speech_chunks_count += 1
-                        # Voice confirmed: gently decrement silence accumulator rather than wiping out
-                        if consecutive_voice_chunks >= 2:
-                            silence_chunks = max(0, silence_chunks - 2)
+                        silence_chunks = 0
                         print(f"\r\033[1;32m[🎙 Heard You   |{meter_bar}|]\033[0m\033[K", end="", flush=True)
 
                         if time.time() - speech_start_time > max_speech_sec:
