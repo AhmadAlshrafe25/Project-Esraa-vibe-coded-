@@ -12,22 +12,32 @@ from jarvis.actions.vision import screen_vision
 from jarvis.actions.apis import api_manager
 from jarvis.voice.speaker import voice_speaker
 from jarvis.comms.messaging import CommsManager
+from jarvis.agents.subagents import ResearchSubAgent
 from jarvis.memory import memory_service
 from config.settings import PROJECT_ROOT
 
 SOUL_FILE = PROJECT_ROOT / "SOUL.md"
 
-SYSTEM_PROMPT_TEMPLATE = """You are Ezra, an ultra-fast, loyal, witty British AI assistant (inspired by JARVIS).
+ALL_TOOLS_LIST = (
+    "inspect_screen, click_screen_element, type_message, dictate_text, press_key, press_hotkey, "
+    "toggle_voice, get_weather, get_crypto_price, get_exchange_rate, search_wikipedia, get_network_info, "
+    "get_tech_news, get_github_info, open_tab, search_web, play_youtube, launch_app, close_app, "
+    "send_discord_message, take_screenshot, media_control, get_system_status, set_volume, remember_fact, "
+    "execute_shell_command, send_email, send_telegram, get_daily_briefing, send_desktop_notification, "
+    "schedule_timer, git_status, git_publish, git_log_recent, deep_research"
+)
+
+SYSTEM_PROMPT_TEMPLATE = f"""You are Ezra, an ultra-fast, loyal, witty British AI assistant (inspired by JARVIS).
 Rules:
 - Ultra-short & punchy: 1 sentence preferred, 2 max. Never bloat replies.
 - Direct & sharp British wit.
 - Multilingual & Slang: Seamlessly understand British English, modern slang, idioms, and Arabic (العربية). Reply in British English, or in natural Arabic if addressed in Arabic.
 - Spoken input: Understand intended conversational meaning even with minor acoustic homophones.
 - Execute actions immediately.
-User Context: {learned_context}
+User Context: {{learned_context}}
 
 Tools available:
-inspect_screen, click_screen_element, type_message, dictate_text, press_key, press_hotkey, toggle_voice, get_weather, get_crypto_price, get_exchange_rate, search_wikipedia, get_network_info, get_tech_news, get_github_info, open_tab, search_web, play_youtube, launch_app, close_app, send_discord_message, take_screenshot, media_control, get_system_status, set_volume, remember_fact, execute_shell_command, send_email, send_telegram.
+{ALL_TOOLS_LIST}.
 
 Format any tool calls as:
 ```tool_call
@@ -40,12 +50,7 @@ def get_system_prompt(learned_context: str) -> str:
         try:
             soul_text = SOUL_FILE.read_text(encoding="utf-8").strip()
             tools_spec = (
-                "\n\nTools available:\n"
-                "inspect_screen, click_screen_element, type_message, dictate_text, press_key, press_hotkey, "
-                "toggle_voice, get_weather, get_crypto_price, get_exchange_rate, search_wikipedia, get_network_info, "
-                "get_tech_news, get_github_info, open_tab, search_web, play_youtube, launch_app, close_app, "
-                "send_discord_message, take_screenshot, media_control, get_system_status, set_volume, remember_fact, "
-                "execute_shell_command, send_email, send_telegram.\n\n"
+                f"\n\nTools available:\n{ALL_TOOLS_LIST}.\n\n"
                 "Format any tool calls strictly as:\n"
                 "```tool_call\n"
                 '{"tool": "tool_name", "args": {...}}\n'
@@ -149,6 +154,34 @@ class BrainEngine:
                 res = CommsManager.send_email(args.get("to_email"), args.get("subject"), args.get("body"))
             elif tool_name == "send_telegram":
                 res = await CommsManager.send_telegram_message(args.get("text"))
+            elif tool_name == "get_daily_briefing":
+                res = api_manager.get_daily_briefing(args.get("city", "Amman"))
+            elif tool_name == "send_desktop_notification":
+                res = SystemManager.send_desktop_notification(
+                    args.get("title", "Project Ezra"),
+                    args.get("message", ""),
+                    args.get("urgency", "normal")
+                )
+            elif tool_name == "schedule_timer":
+                res = SystemManager.schedule_timer(
+                    int(args.get("seconds", 60)),
+                    args.get("note", "Timer finished")
+                )
+            elif tool_name == "git_status":
+                res = SystemManager.git_status(args.get("repo_dir"))
+            elif tool_name == "git_publish":
+                res = SystemManager.git_publish(
+                    args.get("commit_message", ""),
+                    args.get("repo_dir")
+                )
+            elif tool_name == "git_log_recent":
+                res = SystemManager.git_log_recent(
+                    int(args.get("limit", 3)),
+                    args.get("repo_dir")
+                )
+            elif tool_name == "deep_research":
+                q = args.get("query", "") or args.get("topic", "") or user_context
+                res = await ResearchSubAgent.deep_research(q)
             else:
                 res = {"status": "error", "message": f"Unknown tool: {tool_name}"}
             return json.dumps(res)
@@ -270,7 +303,14 @@ class BrainEngine:
             except Exception as e:
                 print(f"[Brain] Groq error: {e}")
 
-        # 3. Offline rule fallback
+        # 3. Attempt Local Ollama fallback (100% Offline LLM on localhost:11434)
+        if not output:
+            try:
+                output = await self._call_ollama(user_message, prompt, speaker_tier=speaker_tier)
+            except Exception:
+                pass
+
+        # 4. Offline smart rule fallback
         if not output:
             output = await self._offline_smart_fallback(user_message)
 
@@ -336,6 +376,30 @@ class BrainEngine:
                 else:
                     raise Exception(f"Groq API returned error: {data}")
 
+    async def _call_ollama(self, user_message: str, system_prompt: str, speaker_tier: str = "verified") -> Dict[str, Any]:
+        """Calls local Ollama daemon (100% offline LLM) at http://127.0.0.1:11434 with fast timeout."""
+        ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+        model = os.getenv("OLLAMA_MODEL", "llama3.2")
+
+        payload = {
+            "model": model,
+            "prompt": f"{system_prompt}\n\nUser: {user_message}\n\nEzra:",
+            "stream": False,
+            "options": {
+                "temperature": 0.5,
+                "num_predict": 120
+            }
+        }
+        timeout = aiohttp.ClientTimeout(total=4.0, connect=1.0)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(f"{ollama_host}/api/generate", json=payload) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    reply_text = data.get("response", "").strip()
+                    if reply_text:
+                        return await self._process_tool_calls_in_text(reply_text, user_context=user_message, speaker_tier=speaker_tier)
+        raise Exception("Ollama daemon did not return valid response.")
+
     async def _process_tool_calls_in_text(self, reply_text: str, user_context: str = "", speaker_tier: str = "verified") -> Dict[str, Any]:
         pattern = r"```tool_call\s*(.*?)\s*```"
         matches = re.findall(pattern, reply_text, re.DOTALL)
@@ -372,6 +436,11 @@ class BrainEngine:
                         tool_speech = f"User {first_res.get('username')} has {first_res.get('public_repos_count')} repos, including {repos}."
                     elif "description" in first_res:
                         tool_speech = f"Repo {first_res.get('repo_name')} ({first_res.get('stars')} stars): {first_res.get('description')}."
+                elif first_tool == "git_status":
+                    clean_state = "working tree clean" if first_res.get("is_clean") else f"{first_res.get('modified_files_count')} uncommitted files"
+                    tool_speech = f"On branch {first_res.get('branch', 'main')}: {clean_state}."
+                elif first_tool == "git_log_recent":
+                    tool_speech = f"Recent commits: {first_res.get('summary', '')}."
                 elif "summary" in first_res:
                     tool_speech = first_res["summary"]
                 elif "extract" in first_res:
@@ -408,6 +477,54 @@ class BrainEngine:
     async def _offline_smart_fallback(self, user_message: str) -> Dict[str, Any]:
         msg = user_message.lower().strip()
         
+        if "brief" in msg or "موجز" in msg or "morning" in msg:
+            res = api_manager.get_daily_briefing()
+            return {
+                "speech_text": res.get("summary", "Executive briefing compiled."),
+                "tool_calls": [{"tool": "get_daily_briefing", "result": res}]
+            }
+
+        if "git status" in msg or "حالة الجت" in msg or "branch status" in msg:
+            res = SystemManager.git_status()
+            clean_state = "working tree clean" if res.get("is_clean") else f"{res.get('modified_files_count')} uncommitted files"
+            return {
+                "speech_text": f"Git repository is on branch {res.get('branch', 'main')}. {clean_state}.",
+                "tool_calls": [{"tool": "git_status", "result": res}]
+            }
+
+        if "git publish" in msg or "publish repo" in msg or "publish changes" in msg or "انشر" in msg:
+            res = SystemManager.git_publish()
+            return {
+                "speech_text": res.get("message", "Git publish executed."),
+                "tool_calls": [{"tool": "git_publish", "result": res}]
+            }
+
+        if "recent commit" in msg or "git log" in msg:
+            res = SystemManager.git_log_recent(limit=3)
+            return {
+                "speech_text": f"Recent commits: {res.get('summary', 'none')}.",
+                "tool_calls": [{"tool": "git_log_recent", "result": res}]
+            }
+
+        m_timer = re.search(r"(?:set|start)?\s*(?:a\s*)?timer\s*(?:for)?\s*(\d+)\s*(sec|second|seconds|min|minute|minutes)", msg) or re.search(r"مؤقت\s*(?:لمدة)?\s*(\d+)\s*(ثانية|دقيقة)", msg)
+        if m_timer:
+            val = int(m_timer.group(1))
+            unit = m_timer.group(2)
+            seconds = val * 60 if any(u in unit for u in ("min", "minute", "دقيقة")) else val
+            res = SystemManager.schedule_timer(seconds, note=f"Timer for {val} {unit}")
+            return {
+                "speech_text": res.get("message", f"Timer set for {val} {unit}."),
+                "tool_calls": [{"tool": "schedule_timer", "result": res}]
+            }
+
+        if msg.startswith("research ") or msg.startswith("deep research ") or msg.startswith("ابحث عن "):
+            clean_q = re.sub(r"^(research|deep research|ابحث عن)\s*", "", user_message, flags=re.IGNORECASE).strip()
+            res = await ResearchSubAgent.deep_research(clean_q)
+            return {
+                "speech_text": res.get("summary", f"Research on {clean_q} completed."),
+                "tool_calls": [{"tool": "deep_research", "result": res}]
+            }
+
         if "movie" in msg or "watch" in msg or "youtube" in msg:
             clean_q = re.sub(r"(open|watch|play|movie|video|on youtube)", "", msg).strip() or "trending movies"
             res = BrowserManager.play_youtube_video_or_music(clean_q)

@@ -14,10 +14,13 @@ BANNER = """\033[1;36m
   ╚═══════════════════════════════════════════════════════════════╝\033[0m"""
 
 def print_banner():
+    from config.settings import TELEGRAM_BOT_TOKEN
     voice_status = "\033[1;31mMuted (Silent Mode)\033[0m" if voice_speaker.is_muted else "\033[1;32mActive (Silky Neural)\033[0m"
+    tg_status = "\033[1;32mActive (Remote Control Ready)\033[0m" if TELEGRAM_BOT_TOKEN else "\033[1;33mStandby (Configure in .env)\033[0m"
     print(BANNER)
     print("\033[1;32m[+] Engine:\033[0m Ultra-Fast Neural Core (Direct Voice Stream)")
-    print(f"\033[1;32m[+] Voice:\033[0m {voice_status}")
+    print(f"\033[1;32m[+] Voice:\033[0m  {voice_status}")
+    print(f"\033[1;32m[+] Remote:\033[0m Telegram Daemon {tg_status}")
     print("\033[1;32m[+] Memory:\033[0m Google Drive Two-Way Synchronizer Active")
     print("\033[1;33m[!] Press ENTER once to activate Hands-Free Conversation!\033[0m")
     print("\033[1;33m[!] Tap ENTER or SPACE to interrupt Ezra at any time!\033[0m")
@@ -202,6 +205,10 @@ def main():
     from jarvis.gdrive_sync import gdrive_sync
     gdrive_sync.pull_from_drive()
 
+    # 2. Launch Telegram Remote Daemon in background
+    from jarvis.comms.telegram_daemon import start_telegram_daemon_background
+    start_telegram_daemon_background()
+
     print_banner()
     initial_greet = "Systems operational, sir. How can I assist you today?"
     prefix = "\033[1;35m[Ezra (Silent)]:\033[0m " if voice_speaker.is_muted else "\033[1;36m[Ezra]:\033[0m "
@@ -258,6 +265,46 @@ def main():
                 is_muted = voice_speaker.toggle_mute()
                 status = "Muted (Silent Mode)" if is_muted else "Active"
                 print(f"\033[1;33m[Ezra Voice: {status}]\033[0m\n")
+                continue
+
+            if user_choice.lower() in ("/brief", "brief", "briefing"):
+                from jarvis.actions.apis import api_manager
+                b = api_manager.get_daily_briefing()
+                print(f"\n\033[1;36m[Ezra Executive Briefing]:\033[0m\n{b.get('summary')}\n")
+                voice_speaker.speak(b.get("summary", ""), prefix="\033[1;36m[Ezra]:\033[0m ")
+                continue
+
+            if user_choice.lower() in ("/status", "status"):
+                from jarvis.actions.system import SystemManager
+                s = SystemManager.get_system_status()
+                g = SystemManager.git_status()
+                print(f"\n\033[1;32m[System Status]:\033[0m CPU: {s['cpu_percent']} | RAM: {s['ram_used_gb']} | Battery: {s['battery']}")
+                print(f"\033[1;32m[Git Status]:\033[0m Branch: {g.get('branch')} | Clean: {g.get('is_clean')} ({g.get('modified_files_count')} changes)\n")
+                continue
+
+            if user_choice.lower().startswith("/git"):
+                from jarvis.actions.system import SystemManager
+                sub = user_choice.split()
+                if len(sub) > 1 and sub[1] in ("publish", "push", "commit"):
+                    msg = " ".join(sub[2:]) if len(sub) > 2 else ""
+                    res = SystemManager.git_publish(commit_message=msg)
+                    print(f"\n\033[1;32m[Git Publish]:\033[0m {res.get('message')}\n")
+                elif len(sub) > 1 and sub[1] in ("log", "recent"):
+                    res = SystemManager.git_log_recent(limit=5)
+                    print(f"\n\033[1;32m[Git Recent Commits]:\033[0m\n" + "\n".join(res.get("commits", [])) + "\n")
+                else:
+                    res = SystemManager.git_status()
+                    print(f"\n\033[1;32m[Git Status]:\033[0m\n{res.get('details')}\n")
+                continue
+
+            if user_choice.lower() == "/telegram":
+                from config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+                token_disp = f"Set (starts with {TELEGRAM_BOT_TOKEN[:6]}...)" if TELEGRAM_BOT_TOKEN else "NOT SET in .env"
+                chat_disp = TELEGRAM_CHAT_ID or "NOT SET (send /start from bot to register)"
+                print(f"\n\033[1;36m[Telegram Remote Link]:\033[0m")
+                print(f"• Bot Token: {token_disp}")
+                print(f"• Chat ID:   {chat_disp}")
+                print(f"• Commands:  /status, /snap, /brief, /say <text>, /run <cmd>\n")
                 continue
 
             if not user_choice:

@@ -50,3 +50,13 @@
 1. **Instant Reflexes (<1ms):** Routine greetings, liveness checks, and mute commands bypass LLM reasoning completely.
 2. **Fast Brain (LLM):** Multi-step logic, conversational queries, desktop automation, and tools.
 3. **Smart Fallback:** If internet or API drops, execute system tasks using local OS rules.
+
+---
+
+## 6. SPECIALIZED PROTOCOLS
+- **Executive Morning Briefing:** Compiles time, local weather, system load, git branch cleanliness, and tech headlines into a punchy spoken brief with a desktop toast notification (`get_daily_briefing`).
+- **Git Developer Flow:** Inspect status (`git_status`), stage & push changes adhering to the publish rule (`git_publish`), and review commit history (`git_log_recent`).
+- **Desktop Alerts & Background Timers:** Dispatch native Linux toast notifications (`send_desktop_notification`) and non-blocking background voice timers (`schedule_timer`).
+- **Autonomous Web Research:** Crawl zero-cost web sources and synthesize multi-page intelligence briefings (`deep_research`).
+- **Offline Resilience:** Gracefully degrade across Gemini 2.0 -> Groq -> Local Ollama -> Instant smart rulebook without failing.
+- **Telegram Remote Link:** Provide two-way mobile companion access for desktop status, screenshots, speech broadcast, and executive briefings.

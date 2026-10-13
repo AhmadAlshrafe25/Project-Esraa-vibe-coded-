@@ -232,4 +232,54 @@ class ApiManager:
         except Exception as e:
             return {"status": "error", "message": f"GitHub API error: {e}"}
 
+    @staticmethod
+    def get_daily_briefing(city: str = "Amman") -> Dict[str, Any]:
+        """Compiles a complete executive morning briefing: time, weather, system load, git state, and top tech news."""
+        import datetime
+        from jarvis.actions.system import SystemManager
+
+        now = datetime.datetime.now()
+        time_str = now.strftime("%I:%M %p on %A, %B %d")
+
+        # 1. Weather
+        weather = ApiManager.get_weather(city)
+        temp_str = weather.get("temp_c", "--")
+        cond_str = weather.get("condition", "clear")
+        loc_str = weather.get("location", city or "Amman")
+
+        # 2. System Status
+        sys_status = SystemManager.get_system_status()
+        cpu_str = sys_status.get("cpu_percent", "--")
+        ram_str = sys_status.get("ram_used_gb", "--").split("/")[0].strip()
+
+        # 3. Git Status
+        git_res = SystemManager.git_status()
+        clean_state = "working tree clean" if git_res.get("is_clean") else f"{git_res.get('modified_files_count', 1)} uncommitted files"
+
+        # 4. Top News Headline
+        news_res = ApiManager.get_tech_news(1)
+        headline = news_res.get("articles", [{}])[0].get("title", "") if news_res.get("articles") else ""
+
+        briefing_text = (
+            f"Good day, sir. It is {time_str}. "
+            f"In {loc_str}, it is {temp_str} and {cond_str}. "
+            f"Systems nominal: CPU at {cpu_str}, RAM using {ram_str}. "
+            f"Git status: {clean_state}."
+        )
+        if headline:
+            briefing_text += f" Top tech headline: {headline}."
+
+        # Send desktop toast notification
+        SystemManager.send_desktop_notification("☕ Ezra Daily Briefing", f"{temp_str} in {loc_str} • CPU {cpu_str} • {clean_state}")
+
+        return {
+            "status": "success",
+            "summary": briefing_text,
+            "time": time_str,
+            "weather": weather,
+            "system": sys_status,
+            "git": git_res,
+            "headline": headline
+        }
+
 api_manager = ApiManager()

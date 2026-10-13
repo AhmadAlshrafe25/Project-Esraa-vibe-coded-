@@ -20,7 +20,8 @@ TIER_GUEST = "guest"        # Score < 0.20: Read-only conversation, outside acti
 SAFE_READ_TOOLS = {
     "get_weather", "get_crypto_price", "get_exchange_rate", "search_wikipedia",
     "get_network_info", "get_tech_news", "get_github_info", "get_system_status",
-    "search_web", "toggle_voice"
+    "search_web", "toggle_voice", "get_daily_briefing", "git_status", "git_log_recent",
+    "deep_research"
 }
 
 class VoiceBiometrics:

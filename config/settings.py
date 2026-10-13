@@ -9,6 +9,8 @@ load_dotenv(PROJECT_ROOT / ".env")
 # LLM & External Keys
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 DEFAULT_CITY = os.getenv("DEFAULT_CITY", "Amman")
 
