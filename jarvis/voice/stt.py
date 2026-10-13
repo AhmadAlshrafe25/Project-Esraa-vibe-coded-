@@ -272,6 +272,7 @@ class NativeSpeechRecognizer:
 
         pre_buffer = deque(maxlen=5)  # 400ms pre-speech ring buffer
         recorded_frames = []
+        recognized_segments = []
         is_speaking = False
         consecutive_voice_chunks = 0
         speech_chunks_count = 0
@@ -280,7 +281,7 @@ class NativeSpeechRecognizer:
 
         start_time = time.time()
         speech_start_time = 0.0
-        max_speech_sec = 6.0
+        max_speech_sec = 15.0  # Allow plenty of time for complete commands
 
         try:
             while True:
@@ -311,7 +312,14 @@ class NativeSpeechRecognizer:
                         recorded_frames.extend(buffered_list)
                         if vosk_rec:
                             for b_chunk in buffered_list:
-                                vosk_rec.AcceptWaveform(b_chunk)
+                                if vosk_rec.AcceptWaveform(b_chunk):
+                                    try:
+                                        res = json.loads(vosk_rec.Result())
+                                        txt = res.get("text", "").strip()
+                                        if txt:
+                                            recognized_segments.append(txt)
+                                    except Exception:
+                                        pass
 
                     if is_speaking:
                         print(f"\r\033[1;32m[🎙 Speaking  |{meter_bar}|]\033[0m\033[K", end="", flush=True)
@@ -320,8 +328,15 @@ class NativeSpeechRecognizer:
                         silence_chunks = 0
                         if vosk_rec:
                             if vosk_rec.AcceptWaveform(chunk):
-                                # Kaldi detected natural sentence end
-                                break
+                                try:
+                                    res = json.loads(vosk_rec.Result())
+                                    txt = res.get("text", "").strip()
+                                    if txt:
+                                        recognized_segments.append(txt)
+                                    if res.get("spk"):
+                                        self.last_spk_vector = res.get("spk")
+                                except Exception:
+                                    pass
 
                         if time.time() - speech_start_time > max_speech_sec:
                             break
@@ -332,18 +347,24 @@ class NativeSpeechRecognizer:
                         silence_chunks += 1
                         print(f"\r\033[1;33m[🎙 Pausing   |{meter_bar}|]\033[0m\033[K", end="", flush=True)
                         if vosk_rec:
-                            vosk_rec.AcceptWaveform(chunk)
+                            if vosk_rec.AcceptWaveform(chunk):
+                                try:
+                                    res = json.loads(vosk_rec.Result())
+                                    txt = res.get("text", "").strip()
+                                    if txt:
+                                        recognized_segments.append(txt)
+                                    if res.get("spk"):
+                                        self.last_spk_vector = res.get("spk")
+                                except Exception:
+                                    pass
                         if silence_chunks >= max_silence_chunks:
-                            # Sub-second silence trigger
+                            # Natural end of complete utterance
                             break
                     else:
                         pre_buffer.append(chunk)
                         print(f"\r\033[1;36m[🎙 Listening |{meter_bar}|]\033[0m\033[K", end="", flush=True)
                         if time.time() - start_time > max_wait_sec:
                             break
-
-                if time.time() - start_time > 12.0:
-                    break
 
         finally:
             print("\r\033[K", end="", flush=True)
@@ -352,17 +373,21 @@ class NativeSpeechRecognizer:
         if not recorded_frames or not is_speaking or speech_chunks_count < 4:
             return ""
 
-        # Extract near-instant in-memory streaming transcription & speaker vector from Vosk (<5ms)
-        recognized_text = ""
-        spk_vector = []
+        # Extract remaining transcription and speaker vector from Vosk
+        spk_vector = list(self.last_spk_vector)
         if vosk_rec:
             try:
                 final_res = json.loads(vosk_rec.FinalResult())
-                recognized_text = final_res.get("text", "").strip()
-                spk_vector = final_res.get("spk", [])
-                self.last_spk_vector = spk_vector
+                txt = final_res.get("text", "").strip()
+                if txt:
+                    recognized_segments.append(txt)
+                if final_res.get("spk"):
+                    spk_vector = final_res.get("spk")
+                    self.last_spk_vector = spk_vector
             except Exception:
                 pass
+
+        recognized_text = " ".join(recognized_segments).strip()
 
         # If Vosk heard no words, it was not human speech
         if not recognized_text:
