@@ -102,9 +102,8 @@ def continuous_conversation_loop():
                 continue
 
             silence_count = 0
-            print("\r\033[1;33m[⚡ Processing audio...]\033[0m          ", end="", flush=True)
             transcription = stt_engine.transcribe_audio_file(audio_file)
-            print("\r" + " " * 35 + "\r", end="", flush=True)
+            print("\r\033[K", end="", flush=True)
             
             if not transcription or not transcription.strip():
                 continue

@@ -7,6 +7,7 @@ import wave
 import uuid
 import shutil
 import json
+import threading
 import subprocess
 from collections import deque
 from pathlib import Path
@@ -19,15 +20,160 @@ NOISE_PHRASES = {
     "thank you for watching.", "thank you for watching", "thanks for watching",
     "bye.", "bye", "goodbye", "mm", "mm-hmm", "uh", "um", "ah",
     "cough", "laughter", "applause", "music", "[music]", "(music)",
-    "huh", "huh.", "oh", "oh.", "so", "so.", "the"
+    "huh", "huh.", "oh", "oh.", "so", "so.", "the",
+    "<noise>", "[noise]", "(noise)", "noise", "<silence>", "[silence]", "silence"
 }
 
+class AudioStreamWorker:
+    """
+    Persistent microphone capture worker.
+    Keeps `parec` (or fallback `arecord`) running continuously in a background daemon thread.
+    - Zero subprocess spawning overhead during conversation turns.
+    - Discards the 1.5s Linux PipeWire/ALSA hardware DC offset & AGC volume surge ONCE during startup.
+    - Continuously tracks ambient noise baseline (~6500-7500 RMS) smoothly in steady-state.
+    - Drains audio buffer while Ezra speaks aloud to prevent self-interruption and feedback loops.
+    """
+
+    def __init__(self, sample_rate: int = 16000, chunk_duration: float = 0.08):
+        self.sample_rate = sample_rate
+        self.chunk_duration = chunk_duration
+        self.chunk_size = int(self.sample_rate * self.chunk_duration * 2)  # 2560 bytes
+        self.running = True
+        self.buffer = deque(maxlen=150)
+        self.lock = threading.Lock()
+        self.ambient_baseline = 7500.0
+        self.calibrated = False
+        self.proc = None
+        self._start_capture()
+        self.thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self.thread.start()
+
+    def _start_capture(self):
+        """Spawns direct PipeWire/PulseAudio capture process with fallback to ALSA."""
+        if shutil.which("parec"):
+            try:
+                self.proc = subprocess.Popen(
+                    ["parec", "--rate=16000", "--channels=1", "--format=s16le", "--raw"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL
+                )
+                return
+            except Exception:
+                pass
+
+        self.proc = subprocess.Popen(
+            ["arecord", "-D", "default", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw", "-q"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL
+        )
+
+    def _calc_rms(self, pcm_data: bytes) -> float:
+        if not pcm_data or len(pcm_data) < 2:
+            return 0.0
+        count = len(pcm_data) // 2
+        try:
+            samples = struct.unpack(f"<{count}h", pcm_data[:count * 2])
+            sum_squares = sum(s * s for s in samples)
+            return math.sqrt(sum_squares / count)
+        except Exception:
+            return 0.0
+
+    def _read_exact(self, num_bytes: int) -> bytes:
+        """Reads exactly num_bytes from process stdout pipe."""
+        chunks = []
+        bytes_read = 0
+        while bytes_read < num_bytes and self.running:
+            try:
+                part = self.proc.stdout.read(num_bytes - bytes_read)
+                if not part:
+                    break
+                chunks.append(part)
+                bytes_read += len(part)
+            except Exception:
+                break
+        return b"".join(chunks)
+
+    def _capture_loop(self):
+        # 1. Warm-up & Calibration: Discard initial 1.5 seconds of DC offset and AGC surge
+        warm_samples = []
+        for _ in range(18):
+            if not self.running:
+                return
+            data = self._read_exact(self.chunk_size)
+            if not data:
+                break
+            rms = self._calc_rms(data)
+            if 1000.0 < rms < 20000.0:
+                warm_samples.append(rms)
+
+        if warm_samples:
+            self.ambient_baseline = float(np.median(warm_samples))
+        if self.ambient_baseline < 1000.0:
+            self.ambient_baseline = 7500.0
+
+        self.calibrated = True
+
+        # 2. Continuous Capture Loop
+        while self.running:
+            data = self._read_exact(self.chunk_size)
+            if not data:
+                break
+
+            # Check if Ezra is speaking aloud through laptop speakers
+            is_ezra_speaking = False
+            try:
+                from jarvis.voice.speaker import voice_speaker
+                is_ezra_speaking = getattr(voice_speaker, "is_speaking", False)
+            except Exception:
+                pass
+
+            rms = self._calc_rms(data)
+
+            # If Ezra is speaking aloud, drain buffer so laptop mic doesn't hear her
+            if is_ezra_speaking:
+                with self.lock:
+                    self.buffer.clear()
+                continue
+
+            # Update ambient noise baseline continuously (only on steady audio <30000)
+            if rms < 30000.0:
+                self.ambient_baseline = 0.96 * self.ambient_baseline + 0.04 * rms
+
+            with self.lock:
+                self.buffer.append((data, rms))
+
+    def get_chunk(self):
+        """Pulls oldest available chunk from buffer."""
+        with self.lock:
+            if self.buffer:
+                return self.buffer.popleft()
+        return None
+
+    def drain(self, keep_recent: int = 4):
+        """Discards older chunks, keeping at most keep_recent chunks as pre-speech buffer."""
+        with self.lock:
+            while len(self.buffer) > keep_recent:
+                self.buffer.popleft()
+
+    def stop(self):
+        self.running = False
+        if self.proc:
+            try:
+                self.proc.terminate()
+                self.proc.wait(timeout=0.2)
+            except Exception:
+                try:
+                    self.proc.kill()
+                except Exception:
+                    pass
+
+
 class NativeSpeechRecognizer:
-    """Intelligent Voice Activity Detection (VAD) with noise immunity, human voice gating, and ultra-fast Vosk STT."""
+    """Intelligent Voice Activity Detection (VAD) with persistent capture worker and ultra-fast Vosk STT."""
 
     def __init__(self):
         self.recognizer = sr.Recognizer()
-        self.recognizer.operation_timeout = 2.0  # Strict 2s timeout so Google STT never stalls
+        self.recognizer.operation_timeout = 2.0
         self.sample_rate = 16000
         self.chunk_duration = 0.08  # 80ms chunks
         self.chunk_size = int(self.sample_rate * self.chunk_duration * 2)  # 2560 bytes
@@ -54,6 +200,9 @@ class NativeSpeechRecognizer:
             self.vosk_model = None
             self.spk_model = None
 
+        # Persistent stream worker: keeps capture device open continuously
+        self.worker = AudioStreamWorker(sample_rate=self.sample_rate, chunk_duration=self.chunk_duration)
+
     def _ensure_mic_volume(self):
         """Sets microphone to balanced 60% capture volume so speech is clear without clipping or excessive background hiss."""
         try:
@@ -62,47 +211,21 @@ class NativeSpeechRecognizer:
         except Exception:
             pass
 
-    def _calculate_rms(self, pcm_data: bytes) -> float:
-        """Calculates RMS energy of 16-bit PCM chunk."""
-        if not pcm_data or len(pcm_data) < 2:
-            return 0.0
-        count = len(pcm_data) // 2
-        try:
-            samples = struct.unpack(f"<{count}h", pcm_data[:count * 2])
-            sum_squares = sum(s * s for s in samples)
-            return math.sqrt(sum_squares / count)
-        except Exception:
-            return 0.0
-
-    def _spawn_capture_process(self):
-        """Spawns direct PipeWire/PulseAudio capture process with fallback to ALSA."""
-        if shutil.which("parec"):
-            try:
-                return subprocess.Popen(
-                    ["parec", "--rate=16000", "--channels=1", "--format=s16le", "--raw"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL
-                )
-            except Exception:
-                pass
-
-        return subprocess.Popen(
-            ["arecord", "-D", "default", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw", "-q"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL
-        )
-
-    def record_until_finished(self, max_wait_sec: float = 8.0, silence_threshold_sec: float = 0.55) -> str:
+    def record_until_finished(self, max_wait_sec: float = 8.0, silence_threshold_sec: float = 0.50) -> str:
         """
         Dynamically records only genuine human speech with real-time streaming Vosk recognition:
-        - Instant silence cut-off: defaults to 0.55s so Ezra responds near-instantly when user stops speaking.
-        - Adaptive noise floor calibration: automatically normalizes to room acoustics and eliminates mic static/hiss.
-        - Streams incoming audio directly to Vosk Kaldi recognizer in memory.
-        - Maximum speech safety cutoff: caps continuous speech at 6.0s to prevent ever getting stuck!
+        - Persistent audio stream: zero startup transient or DC pop!
+        - Instant silence cut-off: 0.50s trigger when user stops speaking.
+        - Streams incoming audio directly into Vosk Kaldi recognizer concurrently.
+        - Maximum speech safety cutoff: caps continuous speech at 6.0s.
         """
         self._ensure_mic_volume()
         self.last_streaming_transcription = ""
+        self.last_spk_vector = []
         wav_file = CACHE_DIR / f"mic_{uuid.uuid4().hex[:8]}.wav"
+
+        # Drain stale chunks from before listening began (keep 4 chunks = 320ms for pre-buffer)
+        self.worker.drain(keep_recent=4)
 
         vosk_rec = None
         if self.vosk_model:
@@ -115,31 +238,7 @@ class NativeSpeechRecognizer:
             except Exception:
                 vosk_rec = None
 
-        try:
-            proc = self._spawn_capture_process()
-        except Exception as e:
-            raise RuntimeError(f"Microphone recording failed: {e}")
-
-        # 1. Warm-up & Calibration: Discard stream initialization surge and settle baseline
-        calib_rms = []
-        for _ in range(10):
-            init_chunk = proc.stdout.read(self.chunk_size)
-            if not init_chunk:
-                break
-            rms_val = self._calculate_rms(init_chunk)
-            if 1000.0 < rms_val < 20000.0:
-                calib_rms.append(rms_val)
-                if len(calib_rms) >= 3:
-                    break
-
-        ambient_baseline = float(np.median(calib_rms)) if calib_rms else 7500.0
-        if ambient_baseline < 1000.0:
-            ambient_baseline = 7500.0
-
-        # 640ms rolling pre-speech ring buffer
-        pre_buffer_size = int(0.64 / self.chunk_duration)
-        pre_buffer = deque(maxlen=pre_buffer_size)
-
+        pre_buffer = deque(maxlen=5)  # 400ms pre-speech ring buffer
         recorded_frames = []
         is_speaking = False
         consecutive_voice_chunks = 0
@@ -149,39 +248,29 @@ class NativeSpeechRecognizer:
 
         start_time = time.time()
         speech_start_time = 0.0
-        max_speech_sec = 6.0  # Hard ceiling: voice commands should never record longer than 6 seconds!
+        max_speech_sec = 6.0
 
         try:
             while True:
-                chunk = proc.stdout.read(self.chunk_size)
-                if not chunk:
-                    break
+                item = self.worker.get_chunk()
+                if item is None:
+                    time.sleep(0.015)
+                    if not is_speaking and (time.time() - start_time > max_wait_sec):
+                        break
+                    continue
 
-                rms = self._calculate_rms(chunk)
+                chunk, rms = item
+                baseline = self.worker.ambient_baseline
+                speech_threshold = max(baseline * 1.55, baseline + 4000.0)
 
-                # Skip clipping spikes (>32000) from noise floor tracking
-                if rms < 32000.0:
-                    if not is_speaking:
-                        # Smooth continuous tracking of ambient room noise
-                        ambient_baseline = 0.88 * ambient_baseline + 0.12 * rms
-                    else:
-                        # While speaking, noise floor only drifts if lower energy is observed
-                        if rms < ambient_baseline:
-                            ambient_baseline = 0.85 * ambient_baseline + 0.15 * rms
-
-                # Dynamic speech threshold: requires voice energy clearly above ambient floor
-                speech_threshold = max(ambient_baseline * 1.45, ambient_baseline + 3500.0)
-
-                # Accurate dynamic audio level meter
-                excess = max(0.0, rms - ambient_baseline)
-                scale_span = max(speech_threshold - ambient_baseline, 3500.0)
+                # Dynamic audio level meter
+                excess = max(0.0, rms - baseline)
+                scale_span = max(speech_threshold - baseline, 4000.0)
                 level = min(10, max(0, int((excess / scale_span) * 10)))
                 meter_bar = "█" * level + "░" * (10 - level)
 
                 if rms > speech_threshold:
                     consecutive_voice_chunks += 1
-
-                    # Debounce: Require at least 2 consecutive chunks (160ms) of human vocal energy
                     if consecutive_voice_chunks >= 2 and not is_speaking:
                         is_speaking = True
                         speech_start_time = time.time()
@@ -192,16 +281,15 @@ class NativeSpeechRecognizer:
                                 vosk_rec.AcceptWaveform(b_chunk)
 
                     if is_speaking:
-                        print(f"\r\033[1;32m[🎙️ Speaking |{meter_bar}|]\033[0m   ", end="", flush=True)
+                        print(f"\r\033[1;32m[🎙 Speaking  |{meter_bar}|]\033[0m\033[K", end="", flush=True)
                         recorded_frames.append(chunk)
                         speech_chunks_count += 1
                         silence_chunks = 0
                         if vosk_rec:
                             if vosk_rec.AcceptWaveform(chunk):
-                                # Kaldi acoustic model detected end of spoken sentence!
+                                # Kaldi detected natural sentence end
                                 break
 
-                        # Hard ceiling: if user has spoken for 6 seconds, cut off and process immediately!
                         if time.time() - speech_start_time > max_speech_sec:
                             break
                 else:
@@ -209,32 +297,25 @@ class NativeSpeechRecognizer:
                     if is_speaking:
                         recorded_frames.append(chunk)
                         silence_chunks += 1
-                        print(f"\r\033[1;33m[🎙️ Pausing |{meter_bar}|]\033[0m    ", end="", flush=True)
+                        print(f"\r\033[1;33m[🎙 Pausing   |{meter_bar}|]\033[0m\033[K", end="", flush=True)
                         if vosk_rec:
                             vosk_rec.AcceptWaveform(chunk)
                         if silence_chunks >= max_silence_chunks:
-                            # Natural end of spoken command (sub-second trigger)
+                            # Sub-second silence trigger
                             break
                     else:
                         pre_buffer.append(chunk)
-                        print(f"\r\033[1;35m[🎙️ Listening |{meter_bar}|]\033[0m  ", end="", flush=True)
+                        print(f"\r\033[1;36m[🎙 Listening |{meter_bar}|]\033[0m\033[K", end="", flush=True)
                         if time.time() - start_time > max_wait_sec:
                             break
 
-                # Global safety fallback
                 if time.time() - start_time > 12.0:
                     break
 
         finally:
-            proc.terminate()
-            try:
-                proc.wait(timeout=0.2)
-            except Exception:
-                proc.kill()
+            print("\r\033[K", end="", flush=True)
 
-        print("\r" + " " * 40 + "\r", end="", flush=True)
-
-        # Noise Rejection Filter: If total speech was less than 4 chunks (<0.32s), discard as transient click/noise!
+        # Noise Rejection Filter: If user spoke less than 4 chunks (<0.32s), discard as transient click/noise
         if not recorded_frames or not is_speaking or speech_chunks_count < 4:
             return ""
 
@@ -250,6 +331,10 @@ class NativeSpeechRecognizer:
             except Exception:
                 pass
 
+        # If Vosk heard no words, it was not human speech
+        if not recognized_text:
+            return ""
+
         # Biomarker / Voice Genetic Gate check:
         # Rejects random background voices, family/room chatter, and TV!
         from jarvis.voice.biometrics import voice_dna
@@ -257,17 +342,16 @@ class NativeSpeechRecognizer:
         if voice_dna.is_enrolled() and spk_vector and len(spk_vector) >= 10:
             is_verified, score, reason = voice_dna.verify(spk_vector, pcm_data=pcm_bytes)
             if not is_verified:
-                print(f"\r\033[1;31m[🛡️ Voice Gate: Ignored background speaker (Genetic match: {score:.1%}, required: {voice_dna.get_threshold():.0%})]\033[0m   \n")
+                print(f"\r\033[1;31m[🛡️ Voice Gate: Ignored background speaker (Genetic match: {score:.1%}, required: {voice_dna.get_threshold():.0%})]\033[0m\n")
                 self.last_streaming_transcription = ""
                 self.last_spk_vector = []
                 return ""
             else:
-                print(f"\r\033[1;32m[🧬 Voice Genetic Match: {score:.1%} | Verified {voice_dna.get_user_name()}]\033[0m   ")
+                print(f"\r\033[1;32m[🧬 Voice Genetic Match: {score:.1%} | Verified {voice_dna.get_user_name()}]\033[0m\n")
 
-        if recognized_text:
-            self.last_streaming_transcription = recognized_text
+        self.last_streaming_transcription = recognized_text
 
-        # Write clean WAV file for verification/fallback
+        # Write clean WAV file for verification/fallback/enrollment
         with wave.open(str(wav_file), "wb") as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)
@@ -277,19 +361,20 @@ class NativeSpeechRecognizer:
         return str(wav_file)
 
     def transcribe_audio_file(self, audio_path: str) -> str:
-        """Transcribes audio using multi-tier low-latency engine (Streaming Vosk -> Offline Vosk file -> Google 2s timeout -> Gemini)."""
-        if not audio_path and not self.last_streaming_transcription:
+        """Transcribes audio using ultra-fast local Vosk engine (<5ms)."""
+        # Tier 1: Instant Streaming Vosk Result (0ms - decoded concurrently while user spoke)
+        if self.last_streaming_transcription:
+            transcription = self.last_streaming_transcription
+            self.last_streaming_transcription = ""
+            return transcription
+
+        if not audio_path or not os.path.exists(audio_path):
             return ""
 
         transcription = ""
 
-        # 1. Tier 1: Instant Streaming Vosk Result (0ms - decoded concurrently as user spoke)
-        if self.last_streaming_transcription:
-            transcription = self.last_streaming_transcription
-            self.last_streaming_transcription = ""
-
-        # 2. Tier 2: Offline Vosk file pass (<50ms local inference)
-        if not transcription and self.vosk_model and audio_path and os.path.exists(audio_path):
+        # Tier 2: Offline Vosk file pass (<50ms local inference)
+        if self.vosk_model:
             try:
                 import vosk
                 from jarvis.voice.biometrics import voice_dna
@@ -316,41 +401,10 @@ class NativeSpeechRecognizer:
             except Exception:
                 pass
 
-        # 3. Tier 3: High-speed Google Speech Recognition (strict 2s timeout)
-        if not transcription and audio_path and os.path.exists(audio_path):
-            try:
-                with sr.AudioFile(audio_path) as source:
-                    audio_data = self.recognizer.record(source)
-                    text = self.recognizer.recognize_google(audio_data)
-                    if text and text.strip():
-                        transcription = text.strip()
-            except Exception:
-                pass
-
-        # 4. Tier 4: Gemini 3.5 Flash Multimodal Audio (fallback if audio is complex)
-        if not transcription and GEMINI_API_KEY and audio_path and os.path.exists(audio_path):
-            try:
-                import google.genai as genai
-                client = genai.Client(api_key=GEMINI_API_KEY)
-                with open(audio_path, "rb") as f:
-                    audio_bytes = f.read()
-
-                resp = client.models.generate_content(
-                    model="gemini-3.5-flash-lite",
-                    contents=[
-                        genai.types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
-                        "Transcribe the spoken audio accurately into text. If the audio is silent or only background noise, return nothing. Return ONLY the transcription text, no preamble or quotes."
-                    ]
-                )
-                if resp and resp.text:
-                    transcription = resp.text.strip().strip('"').strip("'")
-            except Exception:
-                pass
-
         if not transcription:
             return ""
 
-        # Filter out random background noise hallucinations, timestamps, and fragments
+        # Filter out noise hallucinations, timestamps, fragments
         clean_lower = transcription.lower().strip()
         if (
             clean_lower in NOISE_PHRASES
