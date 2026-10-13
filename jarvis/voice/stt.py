@@ -208,7 +208,9 @@ class NativeSpeechRecognizer:
         try:
             import vosk
             vosk.SetLogLevel(-1)
-            vosk_path = Path.home() / ".cache" / "vosk" / "vosk-model-small-en-us-0.15"
+            model_lgraph = Path.home() / ".cache" / "vosk" / "vosk-model-en-us-0.22-lgraph"
+            model_small = Path.home() / ".cache" / "vosk" / "vosk-model-small-en-us-0.15"
+            vosk_path = model_lgraph if model_lgraph.exists() else model_small
             spk_path = Path.home() / ".cache" / "vosk" / "vosk-model-spk-0.4"
 
             # Cleanly suppress Kaldi C++ node check stderr warnings
