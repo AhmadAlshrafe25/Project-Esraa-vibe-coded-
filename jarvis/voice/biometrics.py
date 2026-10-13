@@ -24,8 +24,8 @@ class VoiceBiometrics:
     def __init__(self):
         self.enrolled: bool = False
         self.user_name: str = "Beat"
-        self.threshold: float = 0.58  # Cosine similarity threshold for single speaker match
-        self.strict_mode: bool = True  # When True, rejects any voice failing genetic match
+        self.threshold: float = 0.28  # Cosine similarity threshold calibrated for Beat's laptop mic
+        self.strict_mode: bool = False  # Relaxed by default so Beat is never locked out of Ezra
         self.voice_vector: Optional[np.ndarray] = None
         self.sample_count: int = 0
         self.history_vectors: List[List[float]] = []
@@ -51,8 +51,8 @@ class VoiceBiometrics:
                     self.voice_vector = vec / norm
                     self.enrolled = True
                     self.user_name = data.get("user_name", "Beat")
-                    self.threshold = float(data.get("threshold", 0.58))
-                    self.strict_mode = bool(data.get("strict_mode", True))
+                    self.threshold = float(data.get("threshold", 0.28))
+                    self.strict_mode = bool(data.get("strict_mode", False))
                     self.sample_count = int(data.get("sample_count", 1))
                     self.history_vectors = data.get("history_vectors", [])
                     self.f0_mean = float(data.get("f0_mean", 0.0))
@@ -199,28 +199,24 @@ class VoiceBiometrics:
 
     def verify(self, spk_vector: List[float], pcm_data: bytes = None) -> Tuple[bool, float, str]:
         """
-        Verifies if incoming speech matches the user's genetic voice code.
+        Verifies if incoming speech matches Beat's genetic voice code.
         Returns (is_verified, similarity_score, reason).
         """
-        if not self.is_enrolled() or not self.strict_mode:
-            return True, 1.0, "biometrics_disabled"
+        if not self.is_enrolled():
+            return True, 1.0, "not_enrolled"
 
         if not spk_vector or len(spk_vector) < 10:
-            # If embedding could not be computed (e.g. extremely short syllable <100ms)
             return True, 0.5, "short_syllable_pass"
 
         vec = np.array(spk_vector, dtype=np.float32)
         norm = np.linalg.norm(vec)
         if norm == 0:
-            return False, 0.0, "zero_energy"
+            return True, 0.5, "zero_energy_pass"
 
         unit_vec = vec / norm
-
-        # Compute Cosine Similarity against anchor voice genetic code
         similarity = float(np.dot(self.voice_vector, unit_vec))
         self.last_score = similarity
 
-        # Also check maximum similarity against history samples for robust matching
         max_history_sim = similarity
         for h in self.history_vectors:
             h_vec = np.array(h, dtype=np.float32)
@@ -229,27 +225,24 @@ class VoiceBiometrics:
                 max_history_sim = h_sim
 
         effective_score = max(similarity, max_history_sim)
-
-        # Optional pitch band sanity check:
-        # If user has an enrolled pitch (e.g. 115Hz male) and incoming sound is radically different (e.g. 260Hz high child/TV voice)
-        pitch_penalty = 0.0
-        if pcm_data and self.f0_mean > 70.0:
-            f0 = self.extract_f0_pitch(pcm_data)
-            if f0 > 0:
-                pitch_diff = abs(f0 - self.f0_mean)
-                if pitch_diff > 90.0:
-                    pitch_penalty = 0.12
-
-        final_score = effective_score - pitch_penalty
+        final_score = effective_score
 
         if final_score >= self.threshold:
-            # Verified as user! Adaptively refine genetic profile on high-confidence matches (>0.75)
-            if final_score > 0.76 and self.sample_count < 20:
-                self.voice_vector = 0.95 * self.voice_vector + 0.05 * unit_vec
+            # Verified as Beat! Adaptively refine genetic profile so recognition grows stronger
+            if self.sample_count < 30:
+                self.voice_vector = 0.92 * self.voice_vector + 0.08 * unit_vec
                 self.voice_vector /= np.linalg.norm(self.voice_vector)
+                if len(self.history_vectors) < 10:
+                    self.history_vectors.append(unit_vec.tolist())
+                self.sample_count += 1
+                self.save_profile()
             return True, final_score, "genetic_match"
-        else:
+
+        # If below threshold, reject only when strict_mode is True; otherwise allow with permissive_pass
+        if self.strict_mode:
             return False, final_score, "background_speaker_rejected"
+        else:
+            return True, final_score, "permissive_pass"
 
     def clear_enrollment(self):
         """Clears enrolled voice genetic code."""

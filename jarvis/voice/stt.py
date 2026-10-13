@@ -210,13 +210,32 @@ class NativeSpeechRecognizer:
             vosk.SetLogLevel(-1)
             vosk_path = Path.home() / ".cache" / "vosk" / "vosk-model-small-en-us-0.15"
             spk_path = Path.home() / ".cache" / "vosk" / "vosk-model-spk-0.4"
-            if vosk_path.exists():
-                self.vosk_model = vosk.Model(str(vosk_path))
-            else:
-                self.vosk_model = vosk.Model(lang="en-us")
 
-            if spk_path.exists():
-                self.spk_model = vosk.SpkModel(str(spk_path))
+            # Cleanly suppress Kaldi C++ node check stderr warnings
+            old_err = None
+            try:
+                old_err = os.dup(2)
+                devnull = os.open(os.devnull, os.O_WRONLY)
+                os.dup2(devnull, 2)
+                os.close(devnull)
+            except Exception:
+                pass
+
+            try:
+                if vosk_path.exists():
+                    self.vosk_model = vosk.Model(str(vosk_path))
+                else:
+                    self.vosk_model = vosk.Model(lang="en-us")
+
+                if spk_path.exists():
+                    self.spk_model = vosk.SpkModel(str(spk_path))
+            finally:
+                if old_err is not None:
+                    try:
+                        os.dup2(old_err, 2)
+                        os.close(old_err)
+                    except Exception:
+                        pass
         except Exception:
             self.vosk_model = None
             self.spk_model = None
