@@ -25,15 +25,8 @@ NOISE_PHRASES = {
 }
 
 def ensure_hardware_mic_volume():
-    """Normalizes ALSA and PipeWire levels so mic capture is clear, sensitive, and unclipped."""
-    try:
-        subprocess.run(["pactl", "set-source-volume", "@DEFAULT_SOURCE@", "75%"], capture_output=True)
-        subprocess.run(["pactl", "set-source-mute", "@DEFAULT_SOURCE@", "0"], capture_output=True)
-        # ALSA hardware calibration: remove +10dB internal boost to prevent distortion, set Capture to 48 (sweet spot)
-        subprocess.run(["amixer", "-c", "0", "set", "Capture", "48"], capture_output=True)
-        subprocess.run(["amixer", "-c", "0", "set", "Internal Mic Boost", "0"], capture_output=True)
-    except Exception:
-        pass
+    """Do NOT touch user microphone volume. User has total control over their input level."""
+    pass
 
 class AudioStreamWorker:
     """
@@ -41,7 +34,7 @@ class AudioStreamWorker:
     Keeps `parec` (or fallback `arecord`) running continuously in a background daemon thread.
     - Zero subprocess spawning overhead during conversation turns.
     - High-Pass DC Offset Removal: Eliminates hardware DC bias completely.
-    - Adaptive Noise Floor Tracker: Continuously measures actual room acoustics (~6500-7500 RMS).
+    - Adaptive Noise Floor Tracker: Accurately follows real ambient room acoustics.
     - Drains audio buffer while Ezra speaks aloud to prevent self-interruption.
     """
 
@@ -52,10 +45,9 @@ class AudioStreamWorker:
         self.running = True
         self.buffer = deque(maxlen=150)
         self.lock = threading.Lock()
-        self.ambient_baseline = 7000.0
+        self.ambient_baseline = 250.0
         self.calibrated = False
         self.proc = None
-        ensure_hardware_mic_volume()
         self._start_capture()
         self.thread = threading.Thread(target=self._capture_loop, daemon=True)
         self.thread.start()
@@ -120,20 +112,20 @@ class AudioStreamWorker:
 
         # 2. Measure actual steady-state ambient room noise
         calib_ac = []
-        for _ in range(10):
+        for _ in range(12):
             if not self.running:
                 return
             raw = self._read_exact(self.chunk_size)
             if not raw:
                 break
             _, ac_val = self._calc_rms_and_clean(raw)
-            if 500.0 < ac_val < 25000.0:
+            if 10.0 < ac_val < 30000.0:
                 calib_ac.append(ac_val)
 
         if calib_ac:
             self.ambient_baseline = float(np.median(calib_ac))
-        if self.ambient_baseline < 1000.0:
-            self.ambient_baseline = 7000.0
+        if self.ambient_baseline < 50.0:
+            self.ambient_baseline = 200.0
 
         self.calibrated = True
 
@@ -211,10 +203,15 @@ class NativeSpeechRecognizer:
         try:
             import vosk
             vosk.SetLogLevel(-1)
+            model_giant = Path.home() / ".cache" / "vosk" / "vosk-model-en-us-0.22"
             model_lgraph = Path.home() / ".cache" / "vosk" / "vosk-model-en-us-0.22-lgraph"
             model_small = Path.home() / ".cache" / "vosk" / "vosk-model-small-en-us-0.15"
-            vosk_path = model_lgraph if model_lgraph.exists() else model_small
-            spk_path = Path.home() / ".cache" / "vosk" / "vosk-model-spk-0.4"
+            if model_giant.exists():
+                vosk_path = model_giant
+            elif model_lgraph.exists():
+                vosk_path = model_lgraph
+            else:
+                vosk_path = model_small
 
             # Cleanly suppress Kaldi C++ node check stderr warnings
             old_err = None
@@ -306,12 +303,12 @@ class NativeSpeechRecognizer:
 
                 chunk, ac_rms = item
                 baseline = self.worker.ambient_baseline
-                # Speech threshold dynamically set above ambient room floor
-                speech_threshold = max(baseline * 1.75, baseline + 5000.0)
+                # Speech threshold: adaptive delta above real room acoustics (sensitive & reliable)
+                speech_threshold = max(baseline * 1.35, baseline + 250.0)
 
-                # Dynamic audio level meter
+                # Dynamic audio level meter: scale dynamically so speaking always lights up the bar
                 excess = max(0.0, ac_rms - baseline)
-                scale_span = max(speech_threshold - baseline, 5000.0)
+                scale_span = max(speech_threshold * 2.0, 1500.0)
                 level = min(10, max(0, int((excess / scale_span) * 10)))
                 meter_bar = "█" * level + "░" * (10 - level)
 
@@ -338,8 +335,6 @@ class NativeSpeechRecognizer:
                                     txt = res.get("text", "").strip()
                                     if txt:
                                         recognized_segments.append(txt)
-                                    if res.get("spk"):
-                                        self.last_spk_vector = res.get("spk")
                                 except Exception:
                                     pass
 
@@ -358,8 +353,6 @@ class NativeSpeechRecognizer:
                                     txt = res.get("text", "").strip()
                                     if txt:
                                         recognized_segments.append(txt)
-                                    if res.get("spk"):
-                                        self.last_spk_vector = res.get("spk")
                                 except Exception:
                                     pass
                         if silence_chunks >= max_silence_chunks:
@@ -374,43 +367,25 @@ class NativeSpeechRecognizer:
         finally:
             print("\r\033[K", end="", flush=True)
 
-        # Noise Rejection Filter: If user spoke less than 4 chunks (<0.32s), discard as transient noise
-        if not recorded_frames or not is_speaking or speech_chunks_count < 4:
+        # Noise Rejection Filter: If user spoke less than 3 chunks (<0.24s), discard as transient noise
+        if not recorded_frames or not is_speaking or speech_chunks_count < 3:
             return ""
 
-        # Extract remaining transcription and speaker vector from Vosk
-        spk_vector = list(self.last_spk_vector)
+        # Extract remaining transcription from Vosk
         if vosk_rec:
             try:
                 final_res = json.loads(vosk_rec.FinalResult())
                 txt = final_res.get("text", "").strip()
                 if txt:
                     recognized_segments.append(txt)
-                if final_res.get("spk"):
-                    spk_vector = final_res.get("spk")
-                    self.last_spk_vector = spk_vector
             except Exception:
                 pass
 
         recognized_text = " ".join(recognized_segments).strip()
-
-        # Biomarker / Voice Genetic Gate check:
-        # Rejects random background voices, family/room chatter, and TV!
-        from jarvis.voice.biometrics import voice_dna
-        pcm_bytes = b"".join(recorded_frames)
-        if voice_dna.is_enrolled() and spk_vector and len(spk_vector) >= 10:
-            is_verified, score, reason = voice_dna.verify(spk_vector, pcm_data=pcm_bytes)
-            if not is_verified:
-                print(f"\r\033[1;31m[🛡️ Voice Gate: Ignored background speaker (Genetic match: {score:.1%}, required: {voice_dna.get_threshold():.0%})]\033[0m\n")
-                self.last_streaming_transcription = ""
-                self.last_spk_vector = []
-                return ""
-            else:
-                print(f"\r\033[1;32m[🧬 Voice Genetic Match: {score:.1%} | Verified {voice_dna.get_user_name()}]\033[0m\n")
-
         self.last_streaming_transcription = recognized_text
 
-        # Write clean WAV file for verification/fallback/enrollment
+        # Write clean WAV file for verification/cloud recognition
+        pcm_bytes = b"".join(recorded_frames)
         with wave.open(str(wav_file), "wb") as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)
@@ -453,12 +428,8 @@ class NativeSpeechRecognizer:
         if self.vosk_model:
             try:
                 import vosk
-                from jarvis.voice.biometrics import voice_dna
                 with wave.open(audio_path, "rb") as wf:
-                    if self.spk_model:
-                        rec = vosk.KaldiRecognizer(self.vosk_model, wf.getframerate(), self.spk_model)
-                    else:
-                        rec = vosk.KaldiRecognizer(self.vosk_model, wf.getframerate())
+                    rec = vosk.KaldiRecognizer(self.vosk_model, wf.getframerate())
                     while True:
                         data = wf.readframes(4000)
                         if not data:
@@ -466,12 +437,6 @@ class NativeSpeechRecognizer:
                         rec.AcceptWaveform(data)
                     file_res = json.loads(rec.FinalResult())
                     text = file_res.get("text", "").strip()
-                    spk = file_res.get("spk", [])
-                    if voice_dna.is_enrolled() and spk and len(spk) >= 10:
-                        is_ok, score, _ = voice_dna.verify(spk)
-                        if not is_ok:
-                            print(f"\r\033[1;31m[🛡️ Voice Gate: Ignored background speaker (match: {score:.1%})]\033[0m\n")
-                            return ""
                     if text:
                         transcription = text
             except Exception:

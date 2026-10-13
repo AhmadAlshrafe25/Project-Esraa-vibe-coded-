@@ -14,17 +14,13 @@ BANNER = """\033[1;36m
   ╚═══════════════════════════════════════════════════════════════╝\033[0m"""
 
 def print_banner():
-    from jarvis.voice.biometrics import voice_dna
     voice_status = "\033[1;31mMuted (Silent Mode)\033[0m" if voice_speaker.is_muted else "\033[1;32mActive (Silky Neural)\033[0m"
-    gate_status = f"\033[1;32m🧬 Genetic Code Locked ({voice_dna.get_user_name()})\033[0m" if voice_dna.is_enrolled() else "\033[1;33m⚠️ Uncalibrated (Type /enroll)\033[0m"
     print(BANNER)
-    print("\033[1;32m[+] Engine:\033[0m Gemini 3.5 Flash (Vision & Real-Time APIs)")
+    print("\033[1;32m[+] Engine:\033[0m Ultra-Fast Neural Core (Direct Voice Stream)")
     print(f"\033[1;32m[+] Voice:\033[0m {voice_status}")
-    print(f"\033[1;32m[+] Voice Gate:\033[0m {gate_status}")
     print("\033[1;32m[+] Memory:\033[0m Google Drive Two-Way Synchronizer Active")
     print("\033[1;33m[!] Press ENTER once to activate Hands-Free Conversation!\033[0m")
     print("\033[1;33m[!] Tap ENTER or SPACE to interrupt Ezra at any time!\033[0m")
-    print("\033[1;33m[!] Commands: /enroll (calibrate voice), /voicegate, /threshold <num>, /mute, /unmute.\033[0m")
     print("-" * 65 + "\n")
 
 async def handle_turn(text: str) -> dict:
