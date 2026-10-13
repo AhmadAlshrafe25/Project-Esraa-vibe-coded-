@@ -657,12 +657,13 @@ class NativeSpeechRecognizer:
                 baseline = min(self.worker.ambient_baseline, 600.0)
 
                 # Speech threshold:
-                # Musa: "Speech has to be about 3 to 6 times louder than background level to count"
+                # Tuned for laptop mic (no headset): 2.0-2.5x above baseline is enough.
+                # Headset can afford 3-4x because it's pressed against the mouth.
                 if is_speaker_active:
-                    # Higher margin while Ezra speaks so speaker echo doesn't trigger
-                    speech_threshold = max(baseline * 3.8 + 60.0, 280.0)
+                    # Slightly higher margin while Ezra speaks to avoid echo self-triggering
+                    speech_threshold = max(baseline * 2.5 + 40.0, 200.0)
                 else:
-                    speech_threshold = max(baseline * 3.0, 180.0)
+                    speech_threshold = max(baseline * 2.0, 130.0)
 
                 # Dynamic VU Audio Meter: voice dynamically fills the bar
                 excess = max(0.0, ac_rms - baseline)
@@ -672,7 +673,7 @@ class NativeSpeechRecognizer:
                 # Check vocal harmonic density
                 samples_raw = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) if len(chunk) >= 2 else np.array([])
                 is_synthetic_mock = len(samples_raw) > 0 and np.all(samples_raw == 0) and ac_rms > 0
-                has_vocal_harmonics = is_synthetic_mock or (harmonic_density >= 0.18)
+                has_vocal_harmonics = is_synthetic_mock or (harmonic_density >= 0.09)
 
                 if not is_speaking:
                     # ONSET DETECTION PHASE

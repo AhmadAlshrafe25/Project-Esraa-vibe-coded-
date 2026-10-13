@@ -174,7 +174,7 @@ def continuous_conversation_loop():
     print("\n\033[1;32m╔═══════════════════════════════════════════════════════════════╗\033[0m")
     print("\033[1;32m║          ⚡ HANDS-FREE INTELLIGENT CONVERSATION ENGINE        ║\033[0m")
     print("\033[1;32m╚═══════════════════════════════════════════════════════════════╝\033[0m")
-    print("\033[1;36m[•] Active Mode:\033[0m Listening now! Speak freely into your headset.")
+    print("\033[1;36m[•] Active Mode:\033[0m Listening now! Speak freely (laptop mic active).")
     print(f"\033[1;36m[•] Musa Timing:\033[0m {END_SIL}s quiet wait (>1.2s speech), {SHORT_SIL}s on short replies, {MAX_UTT:.0f}s max.")
     if PUSH_TO_TALK:
         print("\033[1;33m[•] Push-To-Talk:\033[0m ENABLED (Hold key to talk, release to finish).")
@@ -185,7 +185,7 @@ def continuous_conversation_loop():
     print("\033[1;36m[•] Sleep Command:\033[0m Say \033[1;31m'go to sleep'\033[0m or \033[1;31m'اسكت'\033[0m to return to standby.")
     print("\033[1;36m[•] Interrupt:\033[0m Speak to interrupt, or tap ENTER/SPACE anytime.\n")
 
-    # Immediate voice prompt so user verifies headset audio is live
+    # Immediate voice prompt so user knows Ezra is live
     voice_speaker.speak("I'm listening, sir. Speak freely.", prefix="\033[1;36m[Ezra]:\033[0m ", live_print=True)
 
     from jarvis.ui.visuals import status_bar
@@ -277,12 +277,12 @@ def continuous_conversation_loop():
                         if isinstance(turn_res, dict) and not turn_res.get("should_continue", True):
                             loop_state["is_awake"] = False
                         else:
-                            print("\033[1;36m[🎙️ Ready for next command — Speak freely into your headset]\033[0m\n")
+                            print("\033[1;36m[🎙️ Go ahead — I'm listening]\033[0m\n")
                     else:
                         has_ar = bool(re.search(r"[\u0600-\u06FF]", transcription))
                         greet = "أهلاً بك يا سيدي، في خدمتك دائماً." if has_ar else "Good day, sir. At your command."
                         voice_speaker.speak(greet, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
-                        print("\033[1;36m[🎙️ Ready for next command — Speak freely into your headset]\033[0m\n")
+                        print("\033[1;36m[🎙️ Go ahead — I'm listening]\033[0m\n")
                 else:
                     # Currently awake (Active dwell mode)
                     actual_query = wake_cmd if (has_wake and wake_cmd) else transcription
@@ -290,7 +290,7 @@ def continuous_conversation_loop():
                     if has_wake and not wake_cmd:
                         loop_state["last_interaction_time"] = time.time()
                         voice_speaker.speak("Right beside you, sir.", prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
-                        print("\033[1;36m[🎙️ Ready for next command — Speak freely into your headset]\033[0m\n")
+                        print("\033[1;36m[🎙️ Go ahead — I'm listening]\033[0m\n")
                         continue
 
                     turn_res = asyncio.run(handle_turn(actual_query, speaker_tier=tier))
@@ -303,7 +303,7 @@ def continuous_conversation_loop():
                     if not should_continue:
                         loop_state["is_awake"] = False
                     else:
-                        print("\033[1;36m[🎙️ Ready for next command — Speak freely into your headset]\033[0m\n")
+                        print("\033[1;36m[🎙️ Go ahead — I'm listening]\033[0m\n")
 
             except Exception as loop_err:
                 status_bar.clear()

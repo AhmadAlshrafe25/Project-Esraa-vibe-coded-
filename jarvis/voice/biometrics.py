@@ -306,8 +306,8 @@ class VoiceBiometrics:
 
             near_field_score = float((0.55 * rms_ratio + 0.25 * crest_factor_norm + 0.20 * prox_factor) * rms_ratio)
 
-            # Strict physical gate: distant voices arriving < 220 RMS are rejected as far-field
-            is_near = (ac_rms >= 220.0 and near_field_score >= 0.28) or (ac_rms >= 350.0)
+            # Physical gate: tuned for laptop mic (30-50cm distance, lower amplitude than headset)
+            is_near = (ac_rms >= 110.0 and near_field_score >= 0.15) or (ac_rms >= 220.0)
             metrics = {
                 "rms": ac_rms,
                 "crest_factor": crest_factor,
