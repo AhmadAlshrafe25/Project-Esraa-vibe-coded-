@@ -122,8 +122,11 @@ class BrainEngine:
         # Clean punctuation
         m_clean = re.sub(r"[^\w\s]", "", m).strip()
 
+        # Clean leading filler like 'ezra', 'israel', 'i said', 'so'
+        m_intent = re.sub(r"^(ezra|israel|hey|hi|yo|so|and|i said)\s+", "", m_clean).strip()
+
         # Greetings
-        if m_clean in ("hi", "hello", "hey", "hey ezra", "hello ezra", "hi ezra", "morning", "good morning"):
+        if m_clean in ("hi", "hello", "hey", "hey ezra", "hello ezra", "hi ezra", "morning", "good morning") or m_intent in ("hi", "hello", "hey"):
             return random.choice([
                 "Good day, sir. At your command.",
                 "Right here, sir. How can I assist?",
@@ -131,7 +134,7 @@ class BrainEngine:
             ])
 
         # Status / liveness checks
-        if m_clean in ("are you there", "you there", "ezra", "can you hear me", "you listening"):
+        if m_clean in ("are you there", "you there", "ezra", "can you hear me", "you listening") or m_intent in ("are you there", "you there"):
             return random.choice([
                 "Loud and clear, sir.",
                 "Always, sir. Ready when you are.",
@@ -139,7 +142,7 @@ class BrainEngine:
             ])
 
         # Acknowledgements
-        if m_clean in ("thank you", "thanks", "thanks ezra", "thank you ezra", "cheers"):
+        if m_clean in ("thank you", "thanks", "thanks ezra", "thank you ezra", "cheers") or m_intent in ("thank you", "thanks"):
             return random.choice([
                 "My absolute pleasure, sir.",
                 "Anytime, sir.",
@@ -153,7 +156,7 @@ class BrainEngine:
                 "Standing by."
             ])
 
-        if m_clean in ("how are you", "how are you doing", "how are things"):
+        if "how are you" in m_clean or "how r u" in m_clean or "how you doing" in m_clean or m_intent in ("how are you", "how are you doing", "how are things"):
             return "Operating at peak performance, sir. Ready for your instructions."
 
         return None
