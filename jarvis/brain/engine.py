@@ -21,10 +21,11 @@ SOUL_FILE = PROJECT_ROOT / "SOUL.md"
 ALL_TOOLS_LIST = (
     "inspect_screen, click_screen_element, type_message, dictate_text, press_key, press_hotkey, "
     "toggle_voice, set_voice_mode, get_weather, get_crypto_price, get_exchange_rate, search_wikipedia, get_network_info, "
-    "get_tech_news, get_github_info, open_tab, close_tab, close_browser, search_web, play_youtube, launch_app, close_app, "
-    "send_discord_message, take_screenshot, media_control, get_system_status, set_volume, remember_fact, "
+    "get_tech_news, get_github_info, open_tab, close_tab, close_browser, search_web, search_portal, open_folder, play_youtube, launch_app, close_app, "
+    "send_discord_message, take_screenshot, media_control, get_system_status, get_top_processes, set_volume, remember_fact, "
     "execute_shell_command, send_email, send_telegram, get_daily_briefing, send_desktop_notification, "
-    "schedule_timer, git_status, git_publish, git_log_recent, deep_research"
+    "schedule_timer, git_status, git_publish, git_log_recent, git_pull, sync_gdrive, lock_screen, "
+    "add_note, get_notes, clear_notes, add_todo, get_todos, clear_todos, get_recent_downloads, deep_research"
 )
 
 SYSTEM_PROMPT_TEMPLATE = f"""You are Ezra, an ultra-fast, loyal, witty British AI assistant (inspired by JARVIS).
@@ -183,6 +184,32 @@ class BrainEngine:
                     int(args.get("limit", 3)),
                     args.get("repo_dir")
                 )
+            elif tool_name == "git_pull":
+                res = SystemManager.git_pull(args.get("repo_dir"))
+            elif tool_name == "sync_gdrive":
+                res = SystemManager.sync_gdrive()
+            elif tool_name == "get_top_processes":
+                res = SystemManager.get_top_processes(int(args.get("limit", 3)))
+            elif tool_name == "lock_screen":
+                res = SystemManager.lock_screen()
+            elif tool_name == "add_note":
+                res = SystemManager.add_note(args.get("note", ""))
+            elif tool_name == "get_notes":
+                res = SystemManager.get_notes(int(args.get("limit", 5)))
+            elif tool_name == "clear_notes":
+                res = SystemManager.clear_notes()
+            elif tool_name == "add_todo":
+                res = SystemManager.add_todo(args.get("task", ""))
+            elif tool_name == "get_todos":
+                res = SystemManager.get_todos()
+            elif tool_name == "clear_todos":
+                res = SystemManager.clear_todos()
+            elif tool_name == "get_recent_downloads":
+                res = SystemManager.get_recent_downloads(int(args.get("limit", 5)))
+            elif tool_name == "search_portal":
+                res = BrowserManager.search_portal(args.get("portal", "google"), args.get("query", ""))
+            elif tool_name == "open_folder":
+                res = BrowserManager.open_folder(args.get("folder_name", "downloads"))
             elif tool_name == "deep_research":
                 q = args.get("query", "") or args.get("topic", "") or user_context
                 res = await ResearchSubAgent.deep_research(q)
@@ -517,6 +544,121 @@ class BrainEngine:
             return {
                 "speech_text": f"Recent commits: {res.get('summary', 'none')}.",
                 "tool_calls": [{"tool": "git_log_recent", "result": res}]
+            }
+
+        if "git pull" in msg or "pull repo" in msg or "pull changes" in msg or "اسحب التغييرات" in msg:
+            res = SystemManager.git_pull()
+            return {
+                "speech_text": res.get("message", "Git pull complete."),
+                "tool_calls": [{"tool": "git_pull", "result": res}]
+            }
+
+        # 3. Google Drive Dual-Laptop Sync
+        if "sync" in msg or "gdrive" in msg or "مزامنة" in msg or "sync data" in msg or "sync memory" in msg:
+            res = SystemManager.sync_gdrive()
+            return {
+                "speech_text": res.get("message", "Cloud memory sync complete."),
+                "tool_calls": [{"tool": "sync_gdrive", "result": res}]
+            }
+
+        # 4. Top System Processes (RAM / CPU Monitor)
+        if any(w in msg for w in ("top process", "top processes", "process hogs", "what is using my ram", "ram usage", "شو اللي ماخذ رام", "العمليات")):
+            res = SystemManager.get_top_processes(limit=3)
+            speech = f"Top processes by memory: {res.get('summary', 'none')}."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "get_top_processes", "result": res}]
+            }
+
+        # 5. Lock Screen
+        if any(w in msg for w in ("lock screen", "lock the screen", "lock computer", "lock pc", "قفل الشاشة", "اقفل الشاشة")):
+            res = SystemManager.lock_screen()
+            speech = "تم قفل الشاشة يا سيدي." if has_ar else "Locking desktop session now, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "lock_screen", "result": res}]
+            }
+
+        # 6. Voice Scratchpad / Notes
+        if any(w in msg for w in ("take a note", "save note", "record note", "سجل ملاحظة", "اكتب ملاحظة")):
+            note_text = re.sub(r"^(?:take a note|save note|record note|سجل ملاحظة|اكتب ملاحظة)\s*:?\s*", "", user_message, flags=re.IGNORECASE).strip()
+            if note_text:
+                res = SystemManager.add_note(note_text)
+                speech = f"حفظت الملاحظة: {note_text}" if has_ar else f"Noted: '{note_text}', sir."
+                return {
+                    "speech_text": speech,
+                    "tool_calls": [{"tool": "add_note", "result": res}]
+                }
+
+        if any(w in msg for w in ("read my notes", "what are my notes", "show notes", "اقرأ الملاحظات", "شو ملاحظاتي")):
+            res = SystemManager.get_notes(limit=3)
+            return {
+                "speech_text": res.get("summary", "No notes found."),
+                "tool_calls": [{"tool": "get_notes", "result": res}]
+            }
+
+        if any(w in msg for w in ("clear notes", "delete notes", "امسح الملاحظات")):
+            res = SystemManager.clear_notes()
+            speech = "تم مسح جميع الملاحظات." if has_ar else "Cleared all notes, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "clear_notes", "result": res}]
+            }
+
+        # 7. Interactive Tasks & Todos
+        if any(w in msg for w in ("add todo", "add task", "remind me to", "أضف مهمة", "سجل مهمة")):
+            task_text = re.sub(r"^(?:add todo|add task|remind me to|أضف مهمة|سجل مهمة)\s*:?\s*", "", user_message, flags=re.IGNORECASE).strip()
+            if task_text:
+                res = SystemManager.add_todo(task_text)
+                speech = f"تمت إضافة المهمة: {task_text}" if has_ar else f"Added task: '{task_text}', sir."
+                return {
+                    "speech_text": speech,
+                    "tool_calls": [{"tool": "add_todo", "result": res}]
+                }
+
+        if any(w in msg for w in ("what are my todos", "read my tasks", "show todos", "show tasks", "اقرأ المهام", "شو مهامي")):
+            res = SystemManager.get_todos()
+            return {
+                "speech_text": res.get("summary", "No pending tasks."),
+                "tool_calls": [{"tool": "get_todos", "result": res}]
+            }
+
+        if any(w in msg for w in ("clear todos", "clear tasks", "امسح المهام")):
+            res = SystemManager.clear_todos()
+            speech = "تم مسح قائمة المهام." if has_ar else "Cleared all tasks, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "clear_todos", "result": res}]
+            }
+
+        # 8. Recent Downloads
+        if any(w in msg for w in ("recent downloads", "what did i download", "آخر التحميلات", "شو حملت")):
+            res = SystemManager.get_recent_downloads(limit=4)
+            speech = f"Recent downloads: {res.get('summary', 'none')}."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "get_recent_downloads", "result": res}]
+            }
+
+        # 9. Open Folders (Downloads, Documents, Pictures, Project)
+        m_folder = re.search(r"(?:open|show)\s+(downloads|documents|pictures|project|code|ezra)\s*(?:folder)?", msg)
+        if m_folder:
+            f_name = m_folder.group(1)
+            res = BrowserManager.open_folder(f_name)
+            return {
+                "speech_text": f"Opening your {f_name} folder, sir.",
+                "tool_calls": [{"tool": "open_folder", "result": res}]
+            }
+
+        # 10. Developer Portal Search (Arch Linux Wiki, GitHub, Stack Overflow, Reddit)
+        m_portal = re.search(r"search\s+(arch\s*wiki|github|stack\s*overflow|reddit)\s+(?:for\s+)?(.+)", msg)
+        if m_portal:
+            portal_target = m_portal.group(1).replace(" ", "")
+            query_term = m_portal.group(2).strip()
+            res = BrowserManager.search_portal(portal_target, query_term)
+            return {
+                "speech_text": f"Searching {portal_target} for {query_term}, sir.",
+                "tool_calls": [{"tool": "search_portal", "result": res}]
             }
 
         # 3. Background Timers

@@ -109,3 +109,48 @@ class BrowserManager:
         for b in targets:
             AppManager.close_app(b)
         return {"status": "success", "message": "Closed browser session, sir."}
+
+    @staticmethod
+    def search_portal(portal: str, query: str) -> dict:
+        """Searches developer portals: archwiki, github, stackoverflow, reddit."""
+        clean_q = urllib.parse.quote_plus(query.strip())
+        p = portal.lower().strip()
+        if "arch" in p or "wiki" in p:
+            url = f"https://wiki.archlinux.org/index.php?search={clean_q}"
+            name = "Arch Linux Wiki"
+        elif "git" in p:
+            url = f"https://github.com/search?q={clean_q}"
+            name = "GitHub"
+        elif "stack" in p or "overflow" in p:
+            url = f"https://stackoverflow.com/search?q={clean_q}"
+            name = "Stack Overflow"
+        elif "reddit" in p:
+            url = f"https://www.reddit.com/search/?q={clean_q}"
+            name = "Reddit"
+        else:
+            url = f"https://www.google.com/search?q={clean_q}"
+            name = "Google"
+        BrowserManager._launch_url_reliably(url)
+        return {"status": "success", "message": f"Searching {name} for '{query}'."}
+
+    @staticmethod
+    def open_folder(folder_name: str = "downloads") -> dict:
+        """Opens user folders in native file manager."""
+        from pathlib import Path
+        clean_f = folder_name.lower().strip()
+        if "download" in clean_f:
+            target = Path.home() / "Downloads"
+        elif "document" in clean_f:
+            target = Path.home() / "Documents"
+        elif "picture" in clean_f or "photo" in clean_f:
+            target = Path.home() / "Pictures"
+        elif "project" in clean_f or "code" in clean_f or "ezra" in clean_f:
+            from config.settings import PROJECT_ROOT
+            target = PROJECT_ROOT
+        else:
+            target = Path.home()
+
+        if shutil.which("xdg-open"):
+            subprocess.Popen(["xdg-open", str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return {"status": "success", "message": f"Opened {target.name} folder."}
+        return {"status": "error", "message": "xdg-open not found."}

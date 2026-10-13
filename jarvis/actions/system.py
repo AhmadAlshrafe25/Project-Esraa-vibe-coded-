@@ -2,6 +2,7 @@ import shutil
 import subprocess
 import psutil
 import datetime
+from pathlib import Path
 
 class SystemManager:
     """Manages system metrics, volume, media control, and command execution."""
@@ -165,3 +166,151 @@ class SystemManager:
             return {"status": "success", "commits": commits, "summary": "; ".join(commits)}
         except Exception as e:
             return {"status": "error", "message": f"Git log failed: {e}"}
+
+    @staticmethod
+    def git_pull(repo_dir: str = None) -> dict:
+        """Pulls latest changes from origin repository."""
+        from config.settings import PROJECT_ROOT
+        target_dir = repo_dir or str(PROJECT_ROOT)
+        try:
+            branch = subprocess.check_output(["git", "branch", "--show-current"], cwd=target_dir, text=True).strip() or "main"
+            pull_out = subprocess.check_output(["git", "pull", "origin", branch], cwd=target_dir, text=True).strip()
+            return {"status": "success", "branch": branch, "message": f"Git pull complete on {branch}: {pull_out}"}
+        except Exception as e:
+            return {"status": "error", "message": f"Git pull failed: {e}"}
+
+    @staticmethod
+    def sync_gdrive() -> dict:
+        """Executes bidirectional Google Drive sync between work and home laptops."""
+        try:
+            from jarvis.gdrive_sync import GDriveSync
+            res = GDriveSync.sync_bidirectional()
+            return {"status": "success", "message": res.get("message", "Cloud memory sync complete.")}
+        except Exception as e:
+            return {"status": "error", "message": f"Google Drive sync failed: {e}"}
+
+    @staticmethod
+    def get_top_processes(limit: int = 3) -> dict:
+        """Finds top RAM and CPU consuming processes on the system."""
+        try:
+            procs = []
+            for p in psutil.process_iter(['name', 'memory_percent', 'cpu_percent']):
+                try:
+                    info = p.info
+                    name = info.get('name') or 'unknown'
+                    mem = round(info.get('memory_percent') or 0.0, 1)
+                    procs.append((name, mem))
+                except Exception:
+                    pass
+            procs.sort(key=lambda x: x[1], reverse=True)
+            top = procs[:limit]
+            summary = ", ".join([f"{name} using {mem}% RAM" for name, mem in top])
+            return {"status": "success", "top_processes": top, "summary": summary}
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to inspect processes: {e}"}
+
+    @staticmethod
+    def lock_screen() -> dict:
+        """Locks the Linux desktop session."""
+        try:
+            if shutil.which("loginctl"):
+                subprocess.run(["loginctl", "lock-session"], check=True)
+                return {"status": "success", "message": "Screen locked."}
+            elif shutil.which("xdg-screensaver"):
+                subprocess.run(["xdg-screensaver", "lock"], check=True)
+                return {"status": "success", "message": "Screen locked."}
+            return {"status": "warning", "message": "No screen lock utility found."}
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to lock screen: {e}"}
+
+    @staticmethod
+    def add_note(note: str) -> dict:
+        """Appends a timestamped note to data/notes.md."""
+        from config.settings import PROJECT_ROOT
+        notes_file = PROJECT_ROOT / "data" / "notes.md"
+        notes_file.parent.mkdir(parents=True, exist_ok=True)
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %I:%M %p")
+        with open(notes_file, "a", encoding="utf-8") as f:
+            f.write(f"- [{now_str}] {note.strip()}\n")
+        return {"status": "success", "message": f"Saved note: '{note.strip()}'"}
+
+    @staticmethod
+    def get_notes(limit: int = 5) -> dict:
+        """Reads recent notes from data/notes.md."""
+        from config.settings import PROJECT_ROOT
+        notes_file = PROJECT_ROOT / "data" / "notes.md"
+        if not notes_file.exists():
+            return {"status": "success", "notes": [], "summary": "You have no notes recorded yet."}
+        with open(notes_file, "r", encoding="utf-8") as f:
+            lines = [line.strip() for line in f.readlines() if line.strip()]
+        recent = lines[-limit:]
+        return {"status": "success", "notes": recent, "summary": " | ".join(recent)}
+
+    @staticmethod
+    def clear_notes() -> dict:
+        """Clears all stored voice notes."""
+        from config.settings import PROJECT_ROOT
+        notes_file = PROJECT_ROOT / "data" / "notes.md"
+        if notes_file.exists():
+            notes_file.unlink()
+        return {"status": "success", "message": "Cleared all notes."}
+
+    @staticmethod
+    def add_todo(task: str) -> dict:
+        """Adds a task to the interactive todo list in data/todos.json."""
+        import json
+        from config.settings import PROJECT_ROOT
+        todo_file = PROJECT_ROOT / "data" / "todos.json"
+        todo_file.parent.mkdir(parents=True, exist_ok=True)
+        todos = []
+        if todo_file.exists():
+            try:
+                with open(todo_file, "r", encoding="utf-8") as f:
+                    todos = json.load(f)
+            except Exception:
+                todos = []
+        todos.append({"task": task.strip(), "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")})
+        with open(todo_file, "w", encoding="utf-8") as f:
+            json.dump(todos, f, indent=2, ensure_ascii=False)
+        return {"status": "success", "message": f"Added task: '{task.strip()}'"}
+
+    @staticmethod
+    def get_todos() -> dict:
+        """Lists active todos from data/todos.json."""
+        import json
+        from config.settings import PROJECT_ROOT
+        todo_file = PROJECT_ROOT / "data" / "todos.json"
+        if not todo_file.exists():
+            return {"status": "success", "todos": [], "summary": "No pending tasks."}
+        try:
+            with open(todo_file, "r", encoding="utf-8") as f:
+                todos = json.load(f)
+            tasks = [t.get("task", "") for t in todos if t.get("task")]
+            summary = ", ".join(tasks) if tasks else "No pending tasks."
+            return {"status": "success", "todos": todos, "summary": summary}
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to read todos: {e}"}
+
+    @staticmethod
+    def clear_todos() -> dict:
+        """Clears all tasks from todo list."""
+        from config.settings import PROJECT_ROOT
+        todo_file = PROJECT_ROOT / "data" / "todos.json"
+        if todo_file.exists():
+            todo_file.unlink()
+        return {"status": "success", "message": "Cleared all pending tasks."}
+
+    @staticmethod
+    def get_recent_downloads(limit: int = 5) -> dict:
+        """Lists recently downloaded files in ~/Downloads."""
+        dl_dir = Path.home() / "Downloads"
+        if not dl_dir.exists():
+            return {"status": "error", "message": "Downloads folder not found."}
+        try:
+            files = [p for p in dl_dir.iterdir() if p.is_file() and not p.name.startswith(".")]
+            files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            recent = [p.name for p in files[:limit]]
+            summary = ", ".join(recent) if recent else "Downloads folder is empty."
+            return {"status": "success", "files": recent, "summary": summary}
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to inspect downloads: {e}"}
