@@ -299,9 +299,84 @@ class TestEdgeCases(unittest.IsolatedAsyncioTestCase):
             keys = ScreenVision.get_api_keys()
             self.assertEqual(keys, ["key_a", "key_b"])
 
+    def test_kwin_focus_rejects_false_positive_terminals(self):
+        """KWin window focusing must reject terminal windows whose title only matches via directory path."""
+        from jarvis.actions.apps import focus_window_by_pattern
+        raw_dbus_output = (
+            '[Argument: a(sssida{sv}) {'
+            '[Argument: (sssida{sv}) "0_{terminal_id}", "~/.gemini/antigravity/scratch/code", "kitty", 30, 0.7, [Argument: a{sv} {}]]'
+            '}]'
+        )
+        fake_info_output = "resourceClass: kitty\ndesktopFile: kitty\nresourceName: kitty\n"
+        with patch("shutil.which", side_effect=lambda c: "/usr/bin/qdbus6" if "qdbus" in c else None):
+            with patch("subprocess.run") as mock_sub:
+                def fake_run(cmd, *args, **kwargs):
+                    mock_res = MagicMock()
+                    mock_res.returncode = 0
+                    if "/WindowsRunner" in cmd and "Match" in cmd:
+                        mock_res.stdout = raw_dbus_output
+                    elif "/KWin" in cmd and "getWindowInfo" in cmd:
+                        mock_res.stdout = fake_info_output
+                    elif "/WindowsRunner" in cmd and "Run" in cmd:
+                        mock_res.stdout = ""
+                    else:
+                        mock_res.stdout = ""
+                    return mock_res
+                mock_sub.side_effect = fake_run
+
+                # Searching for antigravity when only kitty with antigravity path is open must return False (so app can be launched)!
+                result = focus_window_by_pattern("antigravity")
+                self.assertFalse(result)
+
+    async def test_arabic_attached_pronoun_splitting(self):
+        """Commands with attached pronoun verbs like 'وافتحيها' or 'وسكريها' must split correctly."""
+        prompt = "افتحي الآلة الحاسبة وسكريها"
+        with patch.object(self.engine, "execute_tool", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = '{"status": "success"}'
+            res = await self.engine._parse_and_execute_semantic_actions(prompt)
+            self.assertIsNotNone(res)
+            called_tools = [c.args[0] for c in mock_exec.call_args_list]
+            self.assertIn("launch_app", called_tools)
+
+    def test_speaker_is_speaking_resets_in_finally(self):
+        """SmoothSpeaker._play_file_with_interrupt must reset is_speaking to False even on error."""
+        from jarvis.voice.speaker import SmoothSpeaker
+        spk = SmoothSpeaker()
+        spk.is_speaking = True
+        with patch("jarvis.voice.speaker.HAS_PYGAME_MIXER", False):
+            with patch("subprocess.Popen", side_effect=RuntimeError("Audio player error")):
+                spk._play_file_with_interrupt("/fake/path.mp3")
+                self.assertFalse(spk.is_speaking)
+
+    def test_memory_auto_learn_uses_flash_lite(self):
+        """MemoryManager auto_learn_from_interaction must target high-quota gemini-flash-lite-latest."""
+        import inspect
+        mem = MemoryManager()
+        source = inspect.getsource(mem.auto_learn_from_interaction)
+        self.assertIn("gemini-flash-lite-latest", source)
+        self.assertNotIn("gemini-robotics-er-2-preview", source)
+
+    def test_calculator_qalc_terminal_launch(self):
+        """AppManager.launch_app('calculator') when qalc is present should launch in terminal."""
+        with patch("shutil.which") as mock_which:
+            def fake_which(cmd):
+                if cmd in ("qalc", "kitty"):
+                    return f"/usr/bin/{cmd}"
+                return None
+            mock_which.side_effect = fake_which
+            with patch("subprocess.Popen") as mock_popen:
+                res = AppManager.launch_app("calculator")
+                self.assertEqual(res["status"], "success")
+                mock_popen.assert_called_once()
+                args = mock_popen.call_args[0][0]
+                self.assertEqual(args[0], "/usr/bin/kitty")
+                self.assertEqual(args[1], "-e")
+                self.assertEqual(args[2], "qalc")
+
+
     def test_arabic_app_map_focus(self):
         """focus_window_by_pattern must include English equivalent for Arabic app queries."""
-        from jarvis.actions.apps import focus_window_by_pattern, ARABIC_APP_MAP
+        from jarvis.actions.apps import ARABIC_APP_MAP
         self.assertIn("الآلة الحاسبة", ARABIC_APP_MAP)
         self.assertEqual(ARABIC_APP_MAP["الآلة الحاسبة"], "calculator")
 

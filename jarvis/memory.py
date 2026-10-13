@@ -138,14 +138,21 @@ Example format:
 {{"learned": true, "topic": "voice_preference", "content": "Prefers a smooth, natural voice and hates robotic voices."}}
 Return ONLY valid JSON.
 """
-            resp = await asyncio.wait_for(
-                asyncio.to_thread(
-                    client.models.generate_content,
-                    model="gemini-robotics-er-2-preview",
-                    contents=prompt
-                ),
-                timeout=3.5
-            )
+            resp = None
+            for m_candidate in ("gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-flash-latest"):
+                try:
+                    resp = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            client.models.generate_content,
+                            model=m_candidate,
+                            contents=prompt
+                        ),
+                        timeout=3.5
+                    )
+                    if resp and resp.text:
+                        break
+                except Exception:
+                    continue
             if resp and resp.text:
                 import re
                 match = re.search(r"\{.*\}", resp.text, re.DOTALL)

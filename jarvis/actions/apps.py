@@ -561,6 +561,15 @@ ARABIC_APP_MAP = {
     "انتيجرافيتي": "antigravity",
     "كروم": "chrome",
     "فايرفوكس": "firefox",
+    "ديسكورد": "discord",
+    "تليجرام": "telegram",
+    "سبوتيفاي": "spotify",
+    "كود": "code",
+    "محرر الكود": "code",
+    "الإعدادات": "settings",
+    "اعدادات": "settings",
+    "الموسيقى": "music",
+    "يوتيوب": "youtube",
 }
 
 
@@ -576,7 +585,8 @@ def focus_window_by_pattern(pattern: str, pick_other: bool = False) -> bool:
     if p_lower in ARABIC_APP_MAP:
         targets.append(ARABIC_APP_MAP[p_lower])
 
-    if p_lower in ("terminal", "term", "console", "shell", "bash", "zsh", "ترمينال", "الترمينال"):
+    is_terminal_target = p_lower in ("terminal", "term", "console", "shell", "bash", "zsh", "ترمينال", "الترمينال") or any(t in TERMINAL_CLASSES for t in targets)
+    if is_terminal_target:
         targets.extend(TERMINAL_CLASSES)
     elif p_lower in ("browser", "web", "internet", "متصفح"):
         targets.extend(BROWSER_CLASSES)
@@ -586,121 +596,81 @@ def focus_window_by_pattern(pattern: str, pick_other: bool = False) -> bool:
     # 1. Native KDE Plasma 6 & 5 WindowsRunner (sub-20ms activation on Arch Linux Wayland & X11)
     qdbus_cmd = "qdbus6" if shutil.which("qdbus6") else ("qdbus" if shutil.which("qdbus") else None)
     if qdbus_cmd:
-        for tgt in targets:
-            try:
-                res = subprocess.run(
-                    [qdbus_cmd, "--literal", "org.kde.KWin", "/WindowsRunner", "org.kde.krunner1.Match", tgt],
-                    capture_output=True,
-                    text=True,
-                    timeout=1.0
-                )
-                if res.returncode == 0 and res.stdout:
-                    matches = re.findall(r'\[Argument:\s*\(sssida\{sv\}\)\s*\"([^\"]+)\",\s*\"([^\"]*)\",\s*\"([^\"]*)\"', res.stdout)
-                    valid_matches = [m for m in matches if "Desktop " not in m[1]]
-                    if valid_matches:
-                        chosen_match = valid_matches[1] if (pick_other and len(valid_matches) > 1) else valid_matches[0]
-                        run_res = subprocess.run(
-                            [qdbus_cmd, "org.kde.KWin", "/WindowsRunner", "org.kde.krunner1.Run", chosen_match[0], ""],
-                            capture_output=True,
-                            timeout=1.0
-                        )
-                        if run_res.returncode == 0:
-                            focused = True
-                            time.sleep(0.06)
-                            break
-            except Exception:
-                pass
-
-    # 2. KDE Plasma KWin Scripting fallback
-    if not focused and qdbus_cmd:
-        targets_json = json.dumps(targets)
-        pick_other_js = "true" if pick_other else "false"
-        script = f"""
-        var targets = {targets_json};
-        var pickOther = {pick_other_js};
-        var wins = workspace.windowList ? workspace.windowList() : workspace.stackingOrder;
-        var matches = [];
-        var activeWin = workspace.activeWindow;
-
-        for (var i = 0; i < wins.length; ++i) {{
-            var w = wins[i];
-            var title = (w.caption || '').toLowerCase();
-            var cls = (w.resourceClass || '').toLowerCase();
-            var resName = (w.resourceName || '').toLowerCase();
-            var dfn = (w.desktopFileName || '').toLowerCase();
-
-            var hit = false;
-            for (var t = 0; t < targets.length; ++t) {{
-                var tgt = targets[t];
-                if (cls === tgt || resName === tgt || title.indexOf(tgt) !== -1 || cls.indexOf(tgt) !== -1 || resName.indexOf(tgt) !== -1 || dfn.indexOf(tgt) !== -1) {{
-                    hit = true;
-                    break;
-                }}
-            }}
-            if (hit) {{
-                matches.push(w);
-            }}
-        }}
-
-        if (matches.length > 0) {{
-            var chosen = matches[0];
-            if (pickOther && matches.length > 1) {{
-                for (var m = 0; m < matches.length; ++m) {{
-                    if (matches[m] !== activeWin) {{
-                        chosen = matches[m];
-                        break;
-                    }}
-                }}
-            }}
-            if (chosen.desktops && chosen.desktops.length > 0 && workspace.currentDesktop) {{
-                var onCurrent = false;
-                for (var d = 0; d < chosen.desktops.length; ++d) {{
-                    if (chosen.desktops[d] === workspace.currentDesktop) {{ onCurrent = true; break; }}
-                }}
-                if (!onCurrent && chosen.desktops[0]) {{
-                    workspace.currentDesktop = chosen.desktops[0];
-                }}
-            }}
-            chosen.minimized = false;
-            workspace.activeWindow = chosen;
-            if (workspace.raiseWindow) workspace.raiseWindow(chosen);
-        }}
-        """
-        temp_name = None
         try:
-            with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
-                f.write(script)
-                temp_name = f.name
-            script_name = f"focus_{int(time.time() * 1000)}"
-            load_res = subprocess.run(
-                [qdbus_cmd, "org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.loadScript", temp_name, script_name],
+            res = subprocess.run(
+                [qdbus_cmd, "--literal", "org.kde.KWin", "/WindowsRunner", "org.kde.krunner1.Match", ""],
                 capture_output=True,
                 text=True,
                 timeout=1.0
             )
-            s_id = load_res.stdout.strip()
-            if s_id and s_id.isdigit():
-                subprocess.run(
-                    [qdbus_cmd, "org.kde.KWin", f"/Scripting/Script{s_id}", "org.kde.kwin.Script.run"],
-                    capture_output=True,
-                    timeout=1.0
-                )
-                time.sleep(0.04)
-                subprocess.run(
-                    [qdbus_cmd, "org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.unloadScript", script_name],
-                    capture_output=True,
-                    timeout=1.0
-                )
+            if res.returncode == 0 and res.stdout:
+                raw_matches = re.findall(r'\[Argument:\s*\(sssida\{sv\}\)\s*\"([^\"]+)\",\s*\"([^\"]*)\",\s*\"([^\"]*)\"', res.stdout)
+                candidates = []
+                seen_ids = set()
+                for m in raw_matches:
+                    m_id, m_title, m_icon = m[0], m[1].lower(), m[2].lower()
+                    if "desktop " in m_title or m_id in seen_ids:
+                        continue
+                    seen_ids.add(m_id)
+
+                    uuid_m = re.search(r'\{[a-f0-9\-]+\}', m_id)
+                    uuid = uuid_m.group(0) if uuid_m else ""
+                    w_class, w_desktop, w_name = "", "", ""
+                    if uuid:
+                        try:
+                            info_res = subprocess.run(
+                                [qdbus_cmd, "org.kde.KWin", "/KWin", "org.kde.KWin.getWindowInfo", uuid],
+                                capture_output=True,
+                                text=True,
+                                timeout=0.4
+                            )
+                            if info_res.returncode == 0:
+                                for line in info_res.stdout.splitlines():
+                                    if line.startswith("resourceClass:"):
+                                        w_class = line.split(":", 1)[1].strip().lower()
+                                    elif line.startswith("desktopFile:"):
+                                        w_desktop = line.split(":", 1)[1].strip().lower()
+                                    elif line.startswith("resourceName:"):
+                                        w_name = line.split(":", 1)[1].strip().lower()
+                        except Exception:
+                            pass
+
+                    # Guard against false positives:
+                    # If target is not a terminal, do NOT match terminal windows whose title merely contains the target directory/command!
+                    is_win_term = (w_class in TERMINAL_CLASSES) or (m_icon in TERMINAL_CLASSES)
+                    if not is_terminal_target and is_win_term:
+                        continue
+
+                    for tgt in targets:
+                        score = 0
+                        # Direct match on class, desktop file, resource name, or icon
+                        if tgt in (w_class, w_desktop, w_name, m_icon) or any(tgt == x for x in (w_class, w_desktop, w_name, m_icon) if x):
+                            score = 100
+                        elif any(tgt in x for x in (w_class, w_desktop, w_name, m_icon) if x):
+                            score = 80
+                        # Title match (only for non-container applications)
+                        elif tgt in m_title and (w_class not in ("dolphin", "nautilus", "thunar", "cosmic-files", "pcmanfm")):
+                            score = 40
+
+                        if score > 0:
+                            candidates.append((score, m_id, m_title, w_class or m_icon))
+                            break
+
+                if candidates:
+                    candidates.sort(key=lambda c: c[0], reverse=True)
+                    chosen = candidates[1] if (pick_other and len(candidates) > 1) else candidates[0]
+                    run_res = subprocess.run(
+                        [qdbus_cmd, "org.kde.KWin", "/WindowsRunner", "org.kde.krunner1.Run", chosen[1], ""],
+                        capture_output=True,
+                        timeout=1.0
+                    )
+                    if run_res.returncode == 0:
+                        focused = True
+                        time.sleep(0.06)
         except Exception:
             pass
-        finally:
-            if temp_name and os.path.exists(temp_name):
-                try:
-                    os.remove(temp_name)
-                except Exception:
-                    pass
 
-    # 3. wmctrl (Standard on Pop!_OS / X11 / XWayland)
+    # 2. wmctrl (Standard on Pop!_OS / X11 / XWayland)
     if not focused and shutil.which("wmctrl"):
         for tgt in targets:
             try:
@@ -715,7 +685,7 @@ def focus_window_by_pattern(pattern: str, pick_other: bool = False) -> bool:
             except Exception:
                 pass
 
-    # 4. xdotool (X11 / XWayland)
+    # 3. xdotool (X11 / XWayland)
     if not focused and shutil.which("xdotool"):
         for tgt in targets:
             try:
@@ -759,7 +729,7 @@ NATIVE_APPS = {
     "the gravity": _ag_candidates,
     "gravity": _ag_candidates,
     "terminal": ["kitty", "alacritty", "cosmic-term", "gnome-terminal", "konsole", "xfce4-terminal", "foot", "wezterm", "xterm"],
-    "calculator": ["gnome-calculator", "kcalc", "xcalc", "galculator", "speedcrunch", "calc"],
+    "calculator": ["gnome-calculator", "kcalc", "xcalc", "galculator", "speedcrunch", "qalculate-qt", "qalculate-gtk", "qalc", "calc"],
     "files": ["cosmic-files", "nautilus", "dolphin", "thunar", "pcmanfm"],
     "chrome": ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium"],
     "firefox": ["firefox"],
@@ -841,6 +811,10 @@ class AppManager:
         for binary in binary_candidates:
             if shutil.which(binary) or (os.path.exists(binary) and os.access(binary, os.X_OK)):
                 try:
+                    if binary == "qalc":
+                        term = shutil.which("kitty") or shutil.which("alacritty") or shutil.which("konsole") or "xterm"
+                        subprocess.Popen([term, "-e", "qalc"], start_new_session=True)
+                        return {"status": "success", "message": f"Launched calculator ({binary})."}
                     subprocess.Popen(
                         [binary],
                         stdout=subprocess.DEVNULL,

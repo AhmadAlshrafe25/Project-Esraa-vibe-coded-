@@ -586,8 +586,9 @@ class BrainEngine:
         reply_speech = output.get("speech_text", "")
         memory_service.save_message("ezra", reply_speech, output.get("tool_calls", []))
 
-        # Continuously adapt and learn from interaction in background
-        asyncio.create_task(memory_service.auto_learn_from_interaction(user_message, reply_speech))
+        # Reserve background memory learning only for substantive conversational interactions (prevent quota leak)
+        if not output.get("tool_calls") and len(user_message.strip()) > 15:
+            asyncio.create_task(memory_service.auto_learn_from_interaction(user_message, reply_speech))
         return output
 
     async def _call_gemini(self, user_message: str, system_prompt: str, speaker_tier: str = "verified") -> Dict[str, Any]:
@@ -980,11 +981,11 @@ class BrainEngine:
             r'mute|unmute|lower\s+(?:the\s+)?(?:sound|volume)|turn\s+down|turn\s+up|set\s+(?:the\s+)?(?:sound|volume)|'
             r'pause\s+music|resume\s+music|stop\s+music|next\s+(?:song|track)|skip\s+song|'
             r'search|google|prompt|tell|ask|'
-            r'روحي\s+على|ركزي\s+على|افتح|افتحي|شغل|شغلي|اغلق|اغلقي|سكر|سكري|اكتبي|اطبعي|اشري|حرك|انقري|اضغطي|دبل\s+كليك|رايت\s+كليك|'
-            r'اسحب|اضغطي\s+انتر|صور|اقفل|اكتم|علي\s+الصوت|ارفع\s+الصوت|وطي\s+الصوت|اخفض\s+الصوت|وطي|علي|ابحث)'
+            r'روحي\s+على|ركزي\s+على|افتح|افتحي|افتحه|افتحها|افتحيه|افتحيها|شغل|شغلي|شغله|شغلها|اغلق|اغلقي|اغلقه|اغلقها|سكر|سكري|سكريه|سكريها|اكتبي|اطبعي|اشري|حرك|انقري|اضغطي|دبل\s+كليك|رايت\s+كليك|'
+            r'اسحب|اضغطي\s+انتر|صور|اقفل|اكتم|علي\s+الصوت|ارفع\s+الصوت|وطي\s+الصوت|اخفض\s+الصوت|وطي|علي|ارفع|اخفض|ابحث)'
         )
         AR_ATTACHED_VERBS = (
-            r'(?:افتح|افتحي|شغل|شغلي|اغلق|اغلقي|سكر|سكري|اكتبي|اطبعي|اشري|حرك|انقري|اضغطي|اسحب|صور|اقفل|اكتم|علي|ارفع|وطي|اخفض|ابحث|روحي|ركزي)'
+            r'(?:افتح|افتحي|افتحه|افتحها|افتحيه|افتحيها|شغل|شغلي|شغله|شغلها|اغلق|اغلقي|اغلقه|اغلقها|سكر|سكري|سكريه|سكريها|اكتبي|اطبعي|اشري|حرك|انقري|اضغطي|اسحب|صور|اقفل|اكتم|علي|ارفع|ارفعي|وطي|اخفض|اخفضي|ابحث|روحي|ركزي)'
         )
 
         raw_splits = re.split(r'(?:[;,]|\s+(?:and\s+then|then|after\s+that|afterwards|ثم|بعدين|وبعدين|وكمان)\s+)', clean_text)
@@ -1058,9 +1059,10 @@ class BrainEngine:
                 media_or_special = (
                     "the", "this", "tab", "browser", "folder", "downloads", "documents",
                     "youtube", "song", "music", "video", "track", "movie",
-                    "أغنية", "اغنية", "موسيقى", "فيديو", "يوتيوب", "تراك", "مقطع"
+                    "أغنية", "اغنية", "موسيقى", "فيديو", "يوتيوب", "تراك", "مقطع",
+                    "سورة", "قرآن", "قران", "تلاوة", "أنشودة", "انشودة"
                 )
-                if app_t not in media_or_special and not any(app_t.startswith(mw + " ") for mw in ("song", "music", "video", "أغنية", "اغنية", "فيديو", "مقطع", "ألبوم", "البوم")):
+                if app_t not in media_or_special and not any(app_t.startswith(mw + " ") for mw in ("song", "music", "video", "أغنية", "اغنية", "فيديو", "مقطع", "ألبوم", "البوم", "سورة", "قرآن", "قران")):
                     detected_actions.append(("launch_app", {"app_name": app_t}, f"Launching {app_t}"))
                     continue
 
@@ -1096,9 +1098,9 @@ class BrainEngine:
 
             # 6. YouTube & Media Playback (Refined to distinguish launch app from media playback)
             is_music = (
-                any(w in p for w in ("leave her johnny", "shanty", "soundtrack", "song", "music", "youtube", "track", "أغنية", "اغنية", "يوتيوب", "watch", "video", "trailer", "movie", "موسيقى", "فيديو", "تراك"))
+                any(w in p for w in ("leave her johnny", "shanty", "soundtrack", "song", "music", "youtube", "track", "أغنية", "اغنية", "يوتيوب", "watch", "video", "trailer", "movie", "موسيقى", "فيديو", "تراك", "سورة", "قرآن", "قران"))
                 or p.startswith("play ") or p.startswith("listen to ") or p.startswith("put on ") or p.startswith("watch ")
-                or any(p.startswith(w) for w in ("شغل اغنية ", "شغل أغنية ", "شغل فيديو ", "شغل يوتيوب ", "شغل مقطع ", "شغل تراك ", "شغل موسيقى ", "شغلي اغنية ", "شغلي أغنية ", "شغلي فيديو ", "شغلي يوتيوب "))
+                or any(p.startswith(w) for w in ("شغل اغنية ", "شغل أغنية ", "شغل فيديو ", "شغل يوتيوب ", "شغل مقطع ", "شغل تراك ", "شغل موسيقى ", "شغل سورة ", "شغل قرآن ", "شغل قران ", "شغلي اغنية ", "شغلي أغنية ", "شغلي فيديو ", "شغلي يوتيوب "))
                 or ("everything great about" in p)
             )
             if is_music:

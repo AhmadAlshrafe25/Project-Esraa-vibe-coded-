@@ -164,6 +164,7 @@ class SmoothSpeaker:
                 time.sleep(0.02)
 
         finally:
+            self.is_speaking = False
             status_bar.stop_speaking()
             # Drain any trailing bytes from multi-byte key/escape sequences (e.g. CSI u ^[[101;10u)
             if fd is not None:
@@ -183,7 +184,6 @@ class SmoothSpeaker:
                     pass
 
         was_interrupted = self.is_interrupted
-        self.is_speaking = False
         return not was_interrupted
 
     async def _generate_edge_speech(self, text: str, voice_name: str) -> str:
