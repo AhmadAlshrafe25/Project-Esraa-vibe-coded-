@@ -1286,13 +1286,13 @@ class BrainEngine:
                     continue
 
             # Browser Tabs
-            if any(w in p for w in ("close tab", "close the tab", "سكر التاب", "اغلق التاب")):
+            if any(w in p for w in ("close tab", "close the tab", "سكر التاب", "سكري التاب", "اغلق التاب", "اغلقي التاب")):
                 detected_actions.append(("close_tab", {}, "Closed browser tab"))
                 continue
-            if any(w in p for w in ("close browser", "سكر المتصفح", "اغلق المتصفح")):
+            if any(w in p for w in ("close browser", "سكر المتصفح", "سكري المتصفح", "اغلق المتصفح", "اغلقي المتصفح")):
                 detected_actions.append(("close_browser", {}, "Closed browser"))
                 continue
-            if any(w in p for w in ("open tab", "new tab", "افتح تاب")):
+            if any(w in p for w in ("open tab", "new tab", "افتح تاب", "افتحي تاب")):
                 detected_actions.append(("open_tab", {"url": "https://google.com"}, "Opened new tab"))
                 continue
 
