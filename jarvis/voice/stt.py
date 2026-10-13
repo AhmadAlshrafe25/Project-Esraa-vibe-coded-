@@ -24,14 +24,22 @@ NOISE_PHRASES = {
     "<noise>", "[noise]", "(noise)", "noise", "<silence>", "[silence]", "silence"
 }
 
+def ensure_hardware_mic_volume():
+    """Normalizes ALSA and PipeWire levels so mic capture is clear and steady."""
+    try:
+        subprocess.run(["pactl", "set-source-volume", "@DEFAULT_SOURCE@", "60%"], capture_output=True)
+        subprocess.run(["pactl", "set-source-mute", "@DEFAULT_SOURCE@", "0"], capture_output=True)
+    except Exception:
+        pass
+
 class AudioStreamWorker:
     """
     Persistent microphone capture worker.
     Keeps `parec` (or fallback `arecord`) running continuously in a background daemon thread.
     - Zero subprocess spawning overhead during conversation turns.
-    - Discards the 1.5s Linux PipeWire/ALSA hardware DC offset & AGC volume surge ONCE during startup.
-    - Continuously tracks ambient noise baseline (~6500-7500 RMS) smoothly in steady-state.
-    - Drains audio buffer while Ezra speaks aloud to prevent self-interruption and feedback loops.
+    - High-Pass DC Offset Removal: Eliminates hardware DC bias completely.
+    - Adaptive Noise Floor Tracker: Continuously measures actual room acoustics (~6500-7500 RMS).
+    - Drains audio buffer while Ezra speaks aloud to prevent self-interruption.
     """
 
     def __init__(self, sample_rate: int = 16000, chunk_duration: float = 0.08):
@@ -41,9 +49,10 @@ class AudioStreamWorker:
         self.running = True
         self.buffer = deque(maxlen=150)
         self.lock = threading.Lock()
-        self.ambient_baseline = 7500.0
+        self.ambient_baseline = 7000.0
         self.calibrated = False
         self.proc = None
+        ensure_hardware_mic_volume()
         self._start_capture()
         self.thread = threading.Thread(target=self._capture_loop, daemon=True)
         self.thread.start()
@@ -67,16 +76,22 @@ class AudioStreamWorker:
             stderr=subprocess.DEVNULL
         )
 
-    def _calc_rms(self, pcm_data: bytes) -> float:
+    def _calc_rms_and_clean(self, pcm_data: bytes) -> tuple:
+        """
+        Subtracts DC hardware bias and calculates true AC acoustic energy (standard deviation).
+        Returns (clean_pcm_bytes, ac_rms).
+        """
         if not pcm_data or len(pcm_data) < 2:
-            return 0.0
-        count = len(pcm_data) // 2
+            return pcm_data, 0.0
         try:
-            samples = struct.unpack(f"<{count}h", pcm_data[:count * 2])
-            sum_squares = sum(s * s for s in samples)
-            return math.sqrt(sum_squares / count)
+            arr = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
+            mean = np.mean(arr)
+            centered = arr - mean
+            ac_rms = float(np.sqrt(np.mean(centered ** 2)))
+            clean_bytes = np.clip(centered, -32768, 32767).astype(np.int16).tobytes()
+            return clean_bytes, ac_rms
         except Exception:
-            return 0.0
+            return pcm_data, 0.0
 
     def _read_exact(self, num_bytes: int) -> bytes:
         """Reads exactly num_bytes from process stdout pipe."""
@@ -94,29 +109,35 @@ class AudioStreamWorker:
         return b"".join(chunks)
 
     def _capture_loop(self):
-        # 1. Warm-up & Calibration: Discard initial 1.5 seconds of DC offset and AGC surge
-        warm_samples = []
-        for _ in range(18):
+        # 1. Warm-up & Calibration: Discard initial 2.0s (25 chunks) of hardware connection transient
+        for _ in range(25):
             if not self.running:
                 return
-            data = self._read_exact(self.chunk_size)
-            if not data:
-                break
-            rms = self._calc_rms(data)
-            if 1000.0 < rms < 20000.0:
-                warm_samples.append(rms)
+            self._read_exact(self.chunk_size)
 
-        if warm_samples:
-            self.ambient_baseline = float(np.median(warm_samples))
+        # 2. Measure actual steady-state ambient room noise
+        calib_ac = []
+        for _ in range(10):
+            if not self.running:
+                return
+            raw = self._read_exact(self.chunk_size)
+            if not raw:
+                break
+            _, ac_val = self._calc_rms_and_clean(raw)
+            if 500.0 < ac_val < 25000.0:
+                calib_ac.append(ac_val)
+
+        if calib_ac:
+            self.ambient_baseline = float(np.median(calib_ac))
         if self.ambient_baseline < 1000.0:
-            self.ambient_baseline = 7500.0
+            self.ambient_baseline = 7000.0
 
         self.calibrated = True
 
-        # 2. Continuous Capture Loop
+        # 3. Continuous Steady Capture Loop
         while self.running:
-            data = self._read_exact(self.chunk_size)
-            if not data:
+            raw = self._read_exact(self.chunk_size)
+            if not raw:
                 break
 
             # Check if Ezra is speaking aloud through laptop speakers
@@ -127,7 +148,7 @@ class AudioStreamWorker:
             except Exception:
                 pass
 
-            rms = self._calc_rms(data)
+            clean_bytes, ac_rms = self._calc_rms_and_clean(raw)
 
             # If Ezra is speaking aloud, drain buffer so laptop mic doesn't hear her
             if is_ezra_speaking:
@@ -135,12 +156,12 @@ class AudioStreamWorker:
                     self.buffer.clear()
                 continue
 
-            # Update ambient noise baseline continuously (only on steady audio <30000)
-            if rms < 30000.0:
-                self.ambient_baseline = 0.96 * self.ambient_baseline + 0.04 * rms
+            # Update ambient noise baseline continuously (ignoring clipping speech >25000)
+            if ac_rms < 25000.0:
+                self.ambient_baseline = 0.96 * self.ambient_baseline + 0.04 * ac_rms
 
             with self.lock:
-                self.buffer.append((data, rms))
+                self.buffer.append((clean_bytes, ac_rms))
 
     def get_chunk(self):
         """Pulls oldest available chunk from buffer."""
@@ -169,7 +190,7 @@ class AudioStreamWorker:
 
 
 class NativeSpeechRecognizer:
-    """Intelligent Voice Activity Detection (VAD) with persistent capture worker and ultra-fast Vosk STT."""
+    """Intelligent Voice Activity Detection (VAD) with adaptive noise immunity and ultra-fast Vosk STT."""
 
     def __init__(self):
         self.recognizer = sr.Recognizer()
@@ -177,7 +198,7 @@ class NativeSpeechRecognizer:
         self.sample_rate = 16000
         self.chunk_duration = 0.08  # 80ms chunks
         self.chunk_size = int(self.sample_rate * self.chunk_duration * 2)  # 2560 bytes
-        self._ensure_mic_volume()
+        ensure_hardware_mic_volume()
         self.last_streaming_transcription = ""
 
         # Initialize ultra-fast offline Vosk model (<5ms streaming decoding)
@@ -203,23 +224,15 @@ class NativeSpeechRecognizer:
         # Persistent stream worker: keeps capture device open continuously
         self.worker = AudioStreamWorker(sample_rate=self.sample_rate, chunk_duration=self.chunk_duration)
 
-    def _ensure_mic_volume(self):
-        """Sets microphone to balanced 60% capture volume so speech is clear without clipping or excessive background hiss."""
-        try:
-            subprocess.run(["pactl", "set-source-volume", "@DEFAULT_SOURCE@", "60%"], capture_output=True)
-            subprocess.run(["pactl", "set-source-mute", "@DEFAULT_SOURCE@", "0"], capture_output=True)
-        except Exception:
-            pass
-
     def record_until_finished(self, max_wait_sec: float = 8.0, silence_threshold_sec: float = 0.50) -> str:
         """
         Dynamically records only genuine human speech with real-time streaming Vosk recognition:
-        - Persistent audio stream: zero startup transient or DC pop!
-        - Instant silence cut-off: 0.50s trigger when user stops speaking.
+        - True adaptive noise floor: perfectly calibrated to room acoustics (~6500-7500 RMS).
+        - Speech threshold: requires vocal energy clearly above steady noise floor.
         - Streams incoming audio directly into Vosk Kaldi recognizer concurrently.
-        - Maximum speech safety cutoff: caps continuous speech at 6.0s.
+        - Sub-second silence cut-off: 0.50s trigger when user stops speaking.
         """
-        self._ensure_mic_volume()
+        ensure_hardware_mic_volume()
         self.last_streaming_transcription = ""
         self.last_spk_vector = []
         wav_file = CACHE_DIR / f"mic_{uuid.uuid4().hex[:8]}.wav"
@@ -259,17 +272,18 @@ class NativeSpeechRecognizer:
                         break
                     continue
 
-                chunk, rms = item
+                chunk, ac_rms = item
                 baseline = self.worker.ambient_baseline
-                speech_threshold = max(baseline * 1.55, baseline + 4000.0)
+                # Speech threshold dynamically set above ambient room floor
+                speech_threshold = max(baseline * 1.75, baseline + 5000.0)
 
                 # Dynamic audio level meter
-                excess = max(0.0, rms - baseline)
-                scale_span = max(speech_threshold - baseline, 4000.0)
+                excess = max(0.0, ac_rms - baseline)
+                scale_span = max(speech_threshold - baseline, 5000.0)
                 level = min(10, max(0, int((excess / scale_span) * 10)))
                 meter_bar = "█" * level + "░" * (10 - level)
 
-                if rms > speech_threshold:
+                if ac_rms > speech_threshold:
                     consecutive_voice_chunks += 1
                     if consecutive_voice_chunks >= 2 and not is_speaking:
                         is_speaking = True
@@ -315,7 +329,7 @@ class NativeSpeechRecognizer:
         finally:
             print("\r\033[K", end="", flush=True)
 
-        # Noise Rejection Filter: If user spoke less than 4 chunks (<0.32s), discard as transient click/noise
+        # Noise Rejection Filter: If user spoke less than 4 chunks (<0.32s), discard as transient noise
         if not recorded_frames or not is_speaking or speech_chunks_count < 4:
             return ""
 
