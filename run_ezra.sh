@@ -7,7 +7,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 cd "$DIR" || exit 1
 
 # If launched from GUI/Desktop without a terminal, spawn an interactive terminal
-if [ "$1" != "terminal" ] && { [ ! -t 0 ] || [ ! -t 1 ]; }; then
+if [ "$1" != "terminal" ] && [ "$1" != "--daemon" ] && [ "$1" != "-d" ] && [ "$1" != "--auto" ] && { [ ! -t 0 ] || [ ! -t 1 ]; }; then
     for term in kitty alacritty gnome-terminal konsole xfce4-terminal ptyxis foot wezterm xterm cosmic-term; do
         if command -v "$term" >/dev/null 2>&1; then
             case "$term" in
@@ -41,13 +41,13 @@ export PYTHONUNBUFFERED=1
 
 # Run Ezra in virtual environment
 if [ -f "$DIR/venv/bin/python3" ]; then
-    "$DIR/venv/bin/python3" "$DIR/app.py"
+    "$DIR/venv/bin/python3" "$DIR/app.py" "$@"
 else
-    python3 "$DIR/app.py"
+    python3 "$DIR/app.py" "$@"
 fi
 
 EXIT_CODE=$?
-if [ "$EXIT_CODE" -ne 0 ]; then
+if [ "$EXIT_CODE" -ne 0 ] && [ "$1" != "--daemon" ] && [ "$1" != "-d" ]; then
     echo ""
     echo "[!] Ezra exited with code $EXIT_CODE."
     read -r -p "Press ENTER to close..."

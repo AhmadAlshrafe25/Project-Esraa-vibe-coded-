@@ -132,13 +132,35 @@ def continuous_conversation_loop():
     from jarvis.voice.biometrics import voice_dna
 
     DWELL_TIMEOUT_SEC = 180.0  # 3 minutes dwell window
-    is_awake = True  # Starts active immediately!
-    last_interaction_time = time.time()
+    loop_state = {
+        "is_awake": True,
+        "last_interaction_time": time.time(),
+        "wake_reason": ""
+    }
+
+    def on_laptop_wake(reason: str):
+        loop_state["is_awake"] = True
+        loop_state["last_interaction_time"] = time.time()
+        print(f"\n\033[1;32m[⚡ LAPTOP ACTIVATED]:\033[0m Instant wake triggered ({reason})! Ezra online and listening.")
+        try:
+            from jarvis.actions.system import SystemManager
+            SystemManager.send_desktop_notification("⚡ Project Ezra Activated", "Laptop open: Standing by and listening.", urgency="normal")
+        except Exception:
+            pass
+        has_arabic = bool(getattr(voice_speaker, "last_language", "en") == "ar")
+        greet = "أهلاً بك يا سيدي، الأنظمة جاهزة ومستعدة." if has_arabic else "Welcome back, sir. Systems operational and listening."
+        voice_speaker.speak(greet, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
+
+    # Initialize zero-overhead hardware Lid & Wake monitor
+    from jarvis.actions.lid_monitor import LidWakeMonitor
+    lid_mon = LidWakeMonitor(on_wake_callback=on_laptop_wake)
+    lid_mon.start()
 
     print("\n\033[1;32m╔═══════════════════════════════════════════════════════════════╗\033[0m")
     print("\033[1;32m║          ⚡ HANDS-FREE INTELLIGENT CONVERSATION ENGINE        ║\033[0m")
     print("\033[1;32m╚═══════════════════════════════════════════════════════════════╝\033[0m")
     print("\033[1;36m[•] Active Mode:\033[0m Listening now! Speak freely into your headset.")
+    print("\033[1;36m[•] Instant Wake:\033[0m Activates the second the laptop lid opens or wakes from sleep.")
     print("\033[1;36m[•] Dwell Window:\033[0m Stays awake for 3 minutes without repeating wake words.")
     print("\033[1;36m[•] Sleep Command:\033[0m Say \033[1;31m'go to sleep'\033[0m or \033[1;31m'اسكت'\033[0m to return to standby.")
     print("\033[1;36m[•] Interrupt:\033[0m Tap ENTER or SPACE anytime to interrupt.\n")
@@ -146,11 +168,11 @@ def continuous_conversation_loop():
     # Immediate voice prompt so user verifies headset audio is live
     voice_speaker.speak("I'm listening, sir. Speak freely.", prefix="\033[1;36m[Ezra]:\033[0m ", live_print=True)
 
-    while True:
-        try:
+    try:
+        while True:
             # Check dwell timeout if currently awake
-            if is_awake and (time.time() - last_interaction_time > DWELL_TIMEOUT_SEC):
-                is_awake = False
+            if loop_state["is_awake"] and (time.time() - loop_state["last_interaction_time"] > DWELL_TIMEOUT_SEC):
+                loop_state["is_awake"] = False
                 timeout_msg = "Three minutes idle. Entering standby mode, sir. Say 'Ezra' anytime."
                 print(f"\n\033[1;33m[Standby]:\033[0m {timeout_msg}\n")
                 voice_speaker.speak(timeout_msg)
@@ -183,34 +205,34 @@ def continuous_conversation_loop():
                 or any(w in clean_low for w in ("اسكت", "نام", "توقف", "مع السلامة", "اخرس"))
             )
             if is_sleep:
-                is_awake = False
+                loop_state["is_awake"] = False
                 farewell = "حاضر يا سيدي، في وضع الاستعداد." if re.search(r"[\u0600-\u06FF]", clean_low) else "Entering standby, sir. Say 'Ezra' anytime to wake me."
                 voice_speaker.speak(farewell, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
                 continue
 
-            if not is_awake:
+            if not loop_state["is_awake"]:
                 # In standby: check for wake word
                 has_wake, command = check_wake_word(transcription)
                 if not has_wake:
                     print(f"\033[1;33m[Standby Mode]:\033[0m Say 'Ezra' or tap ENTER to activate.")
                     continue
 
-                is_awake = True
-                last_interaction_time = time.time()
+                loop_state["is_awake"] = True
+                loop_state["last_interaction_time"] = time.time()
                 print(f"\033[1;32m[⚡ WAKE TRIGGERED]\033[0m Biometrics: {tier.upper()} ({score:.2f})")
 
                 if command:
                     turn_res = asyncio.run(handle_turn(command, speaker_tier=tier))
-                    last_interaction_time = time.time()
+                    loop_state["last_interaction_time"] = time.time()
                     if isinstance(turn_res, dict) and not turn_res.get("should_continue", True):
-                        is_awake = False
+                        loop_state["is_awake"] = False
                 else:
                     has_ar = bool(re.search(r"[\u0600-\u06FF]", transcription))
                     greet = "أهلاً بك يا سيدي، في خدمتك دائماً." if has_ar else "Good day, sir. At your command."
                     voice_speaker.speak(greet, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
             else:
                 # Currently awake (Active 3-minute dwell mode)
-                last_interaction_time = time.time()
+                loop_state["last_interaction_time"] = time.time()
 
                 # Check if user just said 'Ezra' to check liveness
                 has_wake, command = check_wake_word(transcription)
@@ -221,19 +243,19 @@ def continuous_conversation_loop():
                     continue
 
                 turn_res = asyncio.run(handle_turn(actual_query, speaker_tier=tier))
-                last_interaction_time = time.time()
+                loop_state["last_interaction_time"] = time.time()
                 should_continue = turn_res.get("should_continue", True) if isinstance(turn_res, dict) else turn_res
                 if not should_continue:
-                    is_awake = False
+                    loop_state["is_awake"] = False
 
             time.sleep(0.06)
 
-        except KeyboardInterrupt:
-            print("\n\033[1;33m[Conversation paused. Press ENTER to resume.]\033[0m\n")
-            break
-        except Exception as e:
-            print(f"\n[Error in loop]: {e}\n")
-            break
+    except KeyboardInterrupt:
+        print("\n\033[1;33m[Conversation paused. Press ENTER to resume.]\033[0m\n")
+    except Exception as e:
+        print(f"\n[Error in loop]: {e}\n")
+    finally:
+        lid_mon.stop()
 
 def main():
     # 1. Take memory from Google Drive on startup
@@ -244,10 +266,24 @@ def main():
     from jarvis.comms.telegram_daemon import start_telegram_daemon_background
     start_telegram_daemon_background()
 
+    # 3. Check for --daemon, --auto, or --hands-free CLI flags
+    is_daemon_mode = any(arg in sys.argv for arg in ("--daemon", "--auto", "--hands-free", "-d"))
+
     print_banner()
     initial_greet = "Systems operational, sir. How can I assist you today?"
     prefix = "\033[1;35m[Ezra (Silent)]:\033[0m " if voice_speaker.is_muted else "\033[1;36m[Ezra]:\033[0m "
     voice_speaker.speak(initial_greet, prefix=prefix, live_print=True)
+
+    if is_daemon_mode:
+        print("\033[1;32m[+] Daemon Mode Active: Instant laptop wake & hands-free conversation started automatically!\033[0m\n")
+        while True:
+            try:
+                continuous_conversation_loop()
+            except KeyboardInterrupt:
+                break
+            except Exception as e:
+                time.sleep(1.0)
+        return
 
     while True:
         try:

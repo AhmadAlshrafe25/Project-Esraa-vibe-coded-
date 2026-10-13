@@ -45,6 +45,16 @@ DEFAULT_CITY=Amman
 # Or: ./venv/bin/python3 app.py
 ```
 
+### 4. Enable Instant Laptop Auto-Activation (Arch Linux & Pop!_OS)
+To have Ezra activate the exact second you open your laptop lid or wake from sleep on either laptop:
+```bash
+./install_autostart_daemon.sh
+```
+This automatically configures:
+- **Systemd User Service**: Starts Ezra in the background upon boot and login.
+- **Hardware Lid & Wake Monitor**: Uses D-Bus `login1` and kernel ACPI to detect physical lid opening and resume from sleep in under 5 milliseconds.
+- **Dual-Distro Parity**: Seamlessly supported on both **Arch Linux** (KDE Plasma 6 Wayland) and **Pop!_OS** (GNOME / COSMIC Wayland/X11).
+
 ---
 
 ## 📱 Two-Way Telegram Remote Link Setup (100% Free)
