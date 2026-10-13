@@ -177,9 +177,7 @@ class SmoothSpeaker:
                 visualizer.moving_print(text, prefix=prefix)
             return True
 
-        clean_text = text.strip()[:400]
-
-        # 1. Primary: Silky Smooth Microsoft Neural Voice via Edge-TTS (Sonia then Jenny)
+        # 1. Primary: Silky Smooth Microsoft Neural Voice via Edge-TTS (Sonia)
         for v in [self.voice, self.fallback_voice]:
             try:
                 # Instant disk cache check (0ms network latency)
@@ -188,16 +186,16 @@ class SmoothSpeaker:
                 if cached_file.exists() and cached_file.stat().st_size > 500:
                     return self._play_file_with_interrupt(str(cached_file), text=clean_text, prefix=prefix, live_print=live_print)
 
-                # Generate via isolated ThreadPoolExecutor to prevent unawaited coroutine warnings and loop collisions
+                # Generate with generous 4.0s timeout so synthesis completes naturally
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    audio_file = pool.submit(asyncio.run, self._generate_edge_speech(clean_text, v)).result(timeout=2.5)
+                    audio_file = pool.submit(asyncio.run, self._generate_edge_speech(clean_text, v)).result(timeout=4.0)
 
                 if audio_file and os.path.exists(audio_file):
                     return self._play_file_with_interrupt(audio_file, text=clean_text, prefix=prefix, live_print=live_print)
             except Exception:
                 continue
 
-        # 2. Secondary: Smooth Google Neural Voice with British accent (NEVER robotic)
+        # 2. Secondary: Smooth Google Neural Voice with British accent (1.0s fast fallback)
         try:
             audio_file = self._generate_google_tts(clean_text)
             if audio_file and os.path.exists(audio_file):
