@@ -314,7 +314,7 @@ class NativeSpeechRecognizer:
         consecutive_voice_chunks = 0
         speech_chunks_count = 0
         silence_chunks = 0
-        max_silence_chunks = max(5, int(silence_threshold_sec / self.chunk_duration))  # ~6 chunks = 480ms
+        max_silence_chunks = max(3, int(silence_threshold_sec / self.chunk_duration))  # ~3-4 chunks = 240-320ms fast endpointing
 
         start_time = time.time()
         speech_start_time = 0.0

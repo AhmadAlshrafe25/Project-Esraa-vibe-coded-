@@ -26,15 +26,20 @@ class SystemManager:
 
     @staticmethod
     def set_volume(percent: int) -> dict:
-        """Sets master audio volume on Linux systems (ALSA/PulseAudio/PipeWire)."""
+        """Sets master audio volume on Arch Linux & Pop!_OS (WirePlumber/PulseAudio/ALSA)."""
         percent = max(0, min(100, percent))
+        if shutil.which("wpctl"):
+            frac = round(percent / 100.0, 2)
+            res = subprocess.run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", str(frac)], capture_output=True)
+            if res.returncode == 0:
+                return {"status": "success", "message": f"Volume set to {percent}%."}
         if shutil.which("pactl"):
             subprocess.run(["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{percent}%"], capture_output=True)
             return {"status": "success", "message": f"Volume set to {percent}%."}
         if shutil.which("amixer"):
             subprocess.run(["amixer", "-D", "pulse", "sset", "Master", f"{percent}%"], capture_output=True)
             return {"status": "success", "message": f"Volume set to {percent}%."}
-        return {"status": "warning", "message": f"Audio volume tools (pactl/amixer) not detected."}
+        return {"status": "warning", "message": "Audio volume tools not detected."}
 
     @staticmethod
     def media_control(action: str) -> dict:
@@ -211,10 +216,13 @@ class SystemManager:
 
     @staticmethod
     def lock_screen() -> dict:
-        """Locks the Linux desktop session."""
+        """Locks desktop session on Arch Linux (KDE/Sway/Hyprland) and Pop!_OS (Cosmic/GNOME)."""
         try:
             if shutil.which("loginctl"):
                 subprocess.run(["loginctl", "lock-session"], check=True)
+                return {"status": "success", "message": "Screen locked."}
+            elif shutil.which("gnome-screensaver-command"):
+                subprocess.run(["gnome-screensaver-command", "-l"], check=True)
                 return {"status": "success", "message": "Screen locked."}
             elif shutil.which("xdg-screensaver"):
                 subprocess.run(["xdg-screensaver", "lock"], check=True)

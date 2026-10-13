@@ -39,7 +39,7 @@ NATIVE_APPS = {
     "antique gravity": ["/home/blackcrow/Downloads/Antigravity/Antigravity-x64/antigravity", "antigravity"],
     "the gravity": ["/home/blackcrow/Downloads/Antigravity/Antigravity-x64/antigravity", "antigravity"],
     "gravity": ["/home/blackcrow/Downloads/Antigravity/Antigravity-x64/antigravity", "antigravity"],
-    "terminal": ["cosmic-term", "gnome-terminal", "konsole", "xfce4-terminal", "xterm"],
+    "terminal": ["kitty", "alacritty", "cosmic-term", "gnome-terminal", "konsole", "xfce4-terminal", "foot", "wezterm", "xterm"],
     "calculator": ["gnome-calculator", "kcalc", "xcalc"],
     "files": ["cosmic-files", "nautilus", "dolphin", "thunar", "pcmanfm"],
     "chrome": ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium"],

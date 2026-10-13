@@ -155,8 +155,8 @@ def continuous_conversation_loop():
                 print(f"\n\033[1;33m[Standby]:\033[0m {timeout_msg}\n")
                 voice_speaker.speak(timeout_msg)
 
-            # Record turn from microphone
-            audio_file = stt_engine.record_until_finished(max_wait_sec=8.0, silence_threshold_sec=0.55)
+            # Record turn from microphone with fast 320ms endpointing
+            audio_file = stt_engine.record_until_finished(max_wait_sec=8.0, silence_threshold_sec=0.32)
             if not audio_file:
                 time.sleep(0.04)
                 continue
