@@ -660,7 +660,14 @@ class BrainEngine:
     async def _call_groq(self, user_message: str, system_prompt: str, speaker_tier: str = "verified") -> Dict[str, Any]:
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {"Authorization": f"Bearer {self.groq_key}"}
-        models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+        models = [
+            "qwen/qwen3.8-27b",
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+            "allam-2-7b",
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant"
+        ]
         async with aiohttp.ClientSession() as session:
             for model in models:
                 payload = {
