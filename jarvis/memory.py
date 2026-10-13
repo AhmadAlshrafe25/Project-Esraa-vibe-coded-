@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import json
 import datetime
@@ -117,12 +118,13 @@ class MemoryManager:
 
     async def auto_learn_from_interaction(self, user_text: str, reply_text: str):
         """Asynchronously reflects on conversation to automatically extract corrections, habits, and preferences."""
-        if not GEMINI_API_KEY or len(user_text.strip()) < 4:
+        gemini_key = os.getenv("GEMINI_API_KEY", "")
+        if not gemini_key or len(user_text.strip()) < 4:
             return
 
         try:
             import google.genai as genai
-            client = genai.Client(api_key=GEMINI_API_KEY)
+            client = genai.Client(api_key=gemini_key)
             prompt = f"""
 Analyze this user turn and identify if the user stated any preferences, corrections, feedback, personal facts, or instructions for the assistant.
 User said: "{user_text}"

@@ -360,24 +360,51 @@ class BrainEngine:
         return output
 
     async def _call_gemini(self, user_message: str, system_prompt: str, speaker_tier: str = "verified") -> Dict[str, Any]:
-        candidate_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.0-flash-lite"]
+        candidate_models = [
+            "gemini-flash-latest",
+            "gemini-3.5-flash",
+            "gemini-3.7-flash",
+            "gemini-3.1-flash-lite",
+            "gemini-flash-lite-latest",
+            "gemini-3.8-flash",
+            "gemini-2.5-pro",
+            "gemini-pro-latest"
+        ]
         
-        recent = memory_service.get_recent_history(6)
-        formatted_history = []
+        recent = memory_service.get_recent_history(8)
+        # Build strictly alternating history (user -> model -> user -> model)
+        sanitized_history = []
+        last_role = None
         for h in recent[:-1]:  # Exclude current message
             role = "user" if h["sender"] == "user" else "model"
-            formatted_history.append({"role": role, "parts": [{"text": h["message"]}]})
+            msg_txt = (h.get("message") or "").strip()
+            if not msg_txt:
+                continue
+            if role != last_role:
+                sanitized_history.append({"role": role, "parts": [{"text": msg_txt}]})
+                last_role = role
 
-        contents = formatted_history + [
-            {"role": "user", "parts": [{"text": system_prompt + "\n\nUser: " + user_message}]}
+        # Multi-turn rules for Gemini API:
+        # 1. If last history message is 'user', remove it so new turn is 'user'
+        if sanitized_history and sanitized_history[-1]["role"] == "user":
+            sanitized_history.pop()
+
+        # 2. Conversation must start with 'user'
+        if sanitized_history and sanitized_history[0]["role"] == "model":
+            sanitized_history.pop(0)
+
+        contents = sanitized_history + [
+            {"role": "user", "parts": [{"text": user_message.strip()}]}
         ]
         
         payload = {
+            "system_instruction": {"parts": [{"text": system_prompt}]},
             "contents": contents,
-            "generationConfig": {"temperature": 0.4, "maxOutputTokens": 85}
+            "generationConfig": {"temperature": 0.4, "maxOutputTokens": 200}
         }
 
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(total=8.0, connect=3.0)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             for model_name in candidate_models:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.gemini_key}"
                 try:
@@ -387,7 +414,7 @@ class BrainEngine:
                             if "candidates" in data and data["candidates"]:
                                 reply_text = data["candidates"][0]["content"]["parts"][0]["text"]
                                 return await self._process_tool_calls_in_text(reply_text, user_context=user_message, speaker_tier=speaker_tier)
-                        elif resp.status in (404, 400):
+                        elif resp.status in (404, 400, 503):
                             continue  # Try next model in candidate list
                 except Exception:
                     continue
