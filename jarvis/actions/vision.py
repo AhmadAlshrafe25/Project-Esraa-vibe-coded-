@@ -3,7 +3,7 @@ import glob
 import time
 import subprocess
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from PIL import Image
 
 import sys
@@ -27,8 +27,22 @@ except Exception:
 from config.settings import CACHE_DIR, GEMINI_API_KEY
 from jarvis.actions.apps import capture_desktop_screenshot, mouse_controller
 
+CANDIDATE_VISION_MODELS = [
+    "gemini-3.5-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-flash-latest"
+]
+
+
 class ScreenVision:
     """Provides Ezra with real-time visual perception of your desktop screen."""
+
+    @staticmethod
+    def get_api_keys() -> List[str]:
+        raw = GEMINI_API_KEY or os.getenv("GEMINI_API_KEY", "")
+        return [k.strip() for k in raw.split(",") if k.strip()]
 
     @staticmethod
     def capture_screen() -> str:
@@ -47,14 +61,44 @@ class ScreenVision:
                 pass
         return (mouse_controller.screen_w, mouse_controller.screen_h)
 
-    @staticmethod
-    def analyze_screen(instruction: str = "Describe what is currently visible on the screen.") -> str:
-        """Takes a screenshot and sends it to Gemini 3.5 Flash Vision for visual analysis."""
-        if not GEMINI_API_KEY:
+    @classmethod
+    def _call_gemini_vision(cls, img_bytes: bytes, prompt: str) -> Optional[str]:
+        keys = cls.get_api_keys()
+        if not keys:
+            return None
+
+        import google.genai as genai
+
+        for api_key in keys:
+            client = genai.Client(api_key=api_key)
+            for model_name in CANDIDATE_VISION_MODELS:
+                try:
+                    resp = client.models.generate_content(
+                        model=model_name,
+                        contents=[
+                            genai.types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
+                            prompt
+                        ]
+                    )
+                    if resp and resp.text:
+                        return resp.text.strip()
+                except Exception as e:
+                    # If daily quota limit hit for this key, rotate immediately to next key
+                    err_msg = str(e).lower()
+                    if "429" in err_msg or "quota" in err_msg:
+                        break
+                    continue
+        return None
+
+    @classmethod
+    def analyze_screen(cls, instruction: str = "Describe what is currently visible on the screen.") -> str:
+        """Takes a screenshot and sends it to Gemini Vision for visual analysis."""
+        keys = cls.get_api_keys()
+        if not keys:
             return "Gemini API key is required to analyze the screen visually."
 
         try:
-            screenshot_path = ScreenVision.capture_screen()
+            screenshot_path = cls.capture_screen()
         except Exception as e:
             return f"Failed to capture desktop screenshot: {e}"
 
@@ -62,9 +106,6 @@ class ScreenVision:
             return "Failed to capture desktop screenshot."
 
         try:
-            import google.genai as genai
-            client = genai.Client(api_key=GEMINI_API_KEY)
-
             with open(screenshot_path, "rb") as f:
                 img_bytes = f.read()
 
@@ -74,23 +115,16 @@ class ScreenVision:
                 f"Analyze the screenshot carefully. Answer concisely, smartly, with subtle British wit. Focus directly on the UI elements, open apps, windows, or errors the user asked about."
             )
 
-            resp = client.models.generate_content(
-                model="gemini-3.5-flash-lite",
-                contents=[
-                    genai.types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
-                    prompt
-                ]
-            )
-
-            return resp.text.strip() if resp and resp.text else "Unable to interpret screen contents."
+            text = cls._call_gemini_vision(img_bytes, prompt)
+            return text if text else "Unable to interpret screen contents."
         except Exception as e:
             return f"Visual inspection error: {e}"
 
-    @staticmethod
-    def locate_and_click(element_description: str) -> dict:
+    @classmethod
+    def locate_and_click(cls, element_description: str, clicks: int = 1, button: str = "left") -> dict:
         """Uses visual reasoning to locate an element on screen and click it."""
         try:
-            screenshot_path = ScreenVision.capture_screen()
+            screenshot_path = cls.capture_screen()
         except Exception as e:
             return {"status": "error", "message": f"Failed to capture screen: {e}"}
 
@@ -98,11 +132,9 @@ class ScreenVision:
             return {"status": "error", "message": "Failed to capture screen."}
 
         try:
-            import google.genai as genai
             import json
             import re
 
-            client = genai.Client(api_key=GEMINI_API_KEY)
             with open(screenshot_path, "rb") as f:
                 img_bytes = f.read()
 
@@ -113,25 +145,22 @@ class ScreenVision:
                 f"If not visible, return {{\"found\": false}}"
             )
 
-            resp = client.models.generate_content(
-                model="gemini-3.5-flash-lite",
-                contents=[
-                    genai.types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
-                    prompt
-                ]
-            )
+            reply = cls._call_gemini_vision(img_bytes, prompt)
+            if not reply:
+                return {"status": "error", "message": "Vision model failed to analyze screenshot."}
 
-            match = re.search(r"\{.*\}", resp.text, re.DOTALL)
+            match = re.search(r"\{.*\}", reply, re.DOTALL)
             if match:
                 data = json.loads(match.group(0))
                 if data.get("found"):
-                    screen_w, screen_h = ScreenVision.get_screen_dimensions(screenshot_path)
+                    screen_w, screen_h = cls.get_screen_dimensions(screenshot_path)
                     click_x = int(screen_w * data["x"] / 1000)
                     click_y = int(screen_h * data["y"] / 1000)
-                    mouse_controller.click(click_x, click_y)
+                    mouse_controller.click(click_x, click_y, button=button, clicks=clicks)
+                    action_name = "Double-clicked" if clicks == 2 else ("Right-clicked" if button == "right" else "Clicked")
                     return {
                         "status": "success",
-                        "message": f"Clicked on '{element_description}' at ({click_x}, {click_y}).",
+                        "message": f"{action_name} on '{element_description}' at ({click_x}, {click_y}).",
                         "x": click_x,
                         "y": click_y
                     }
@@ -140,11 +169,19 @@ class ScreenVision:
         except Exception as e:
             return {"status": "error", "message": f"Visual click failed: {e}"}
 
-    @staticmethod
-    def locate_and_point(element_description: str) -> dict:
+    @classmethod
+    def locate_and_double_click(cls, element_description: str) -> dict:
+        return cls.locate_and_click(element_description, clicks=2, button="left")
+
+    @classmethod
+    def locate_and_right_click(cls, element_description: str) -> dict:
+        return cls.locate_and_click(element_description, clicks=1, button="right")
+
+    @classmethod
+    def locate_and_point(cls, element_description: str) -> dict:
         """Uses visual reasoning to locate an element on screen and point the mouse cursor at it."""
         try:
-            screenshot_path = ScreenVision.capture_screen()
+            screenshot_path = cls.capture_screen()
         except Exception as e:
             return {"status": "error", "message": f"Failed to capture screen: {e}"}
 
@@ -152,11 +189,9 @@ class ScreenVision:
             return {"status": "error", "message": "Failed to capture screen."}
 
         try:
-            import google.genai as genai
             import json
             import re
 
-            client = genai.Client(api_key=GEMINI_API_KEY)
             with open(screenshot_path, "rb") as f:
                 img_bytes = f.read()
 
@@ -167,19 +202,15 @@ class ScreenVision:
                 f"If not visible, return {{\"found\": false}}"
             )
 
-            resp = client.models.generate_content(
-                model="gemini-3.5-flash-lite",
-                contents=[
-                    genai.types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
-                    prompt
-                ]
-            )
+            reply = cls._call_gemini_vision(img_bytes, prompt)
+            if not reply:
+                return {"status": "error", "message": "Vision model failed to analyze screenshot."}
 
-            match = re.search(r"\{.*\}", resp.text, re.DOTALL)
+            match = re.search(r"\{.*\}", reply, re.DOTALL)
             if match:
                 data = json.loads(match.group(0))
                 if data.get("found"):
-                    screen_w, screen_h = ScreenVision.get_screen_dimensions(screenshot_path)
+                    screen_w, screen_h = cls.get_screen_dimensions(screenshot_path)
                     target_x = int(screen_w * data["x"] / 1000)
                     target_y = int(screen_h * data["y"] / 1000)
                     mouse_controller.move_to(target_x, target_y)
@@ -194,5 +225,5 @@ class ScreenVision:
         except Exception as e:
             return {"status": "error", "message": f"Visual pointing failed: {e}"}
 
-screen_vision = ScreenVision()
 
+screen_vision = ScreenVision()

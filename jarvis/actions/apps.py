@@ -325,6 +325,8 @@ class MouseController:
         self.screen_w = screen_w
         self.screen_h = screen_h
         self._init_screen_size()
+        self.current_x = self.screen_w // 2
+        self.current_y = self.screen_h // 2
         self._init_uinput()
 
     @classmethod
@@ -354,16 +356,13 @@ class MouseController:
                 pass
 
     def _init_uinput(self):
-        if not evdev or not UInput or not AbsInfo:
+        if not evdev or not UInput:
             return
         if self._uinput is not None:
             return
         try:
+            # Pure relative mouse pointer: standard Linux kernel pointer device recognised by libinput
             cap = {
-                ecodes.EV_ABS: [
-                    (ecodes.ABS_X, AbsInfo(value=self.screen_w // 2, min=0, max=self.screen_w, fuzz=0, flat=0, resolution=0)),
-                    (ecodes.ABS_Y, AbsInfo(value=self.screen_h // 2, min=0, max=self.screen_h, fuzz=0, flat=0, resolution=0)),
-                ],
                 ecodes.EV_REL: [
                     ecodes.REL_X,
                     ecodes.REL_Y,
@@ -372,7 +371,6 @@ class MouseController:
                     ecodes.BTN_LEFT,
                     ecodes.BTN_RIGHT,
                     ecodes.BTN_MIDDLE,
-                    ecodes.BTN_TOUCH,
                 ]
             }
             self._uinput = UInput(cap, name="Ezra-Virtual-Pointer")
@@ -382,48 +380,66 @@ class MouseController:
     def move_to(self, x: int, y: int) -> dict:
         clamped_x = max(0, min(self.screen_w, int(x)))
         clamped_y = max(0, min(self.screen_h, int(y)))
+        dx = clamped_x - self.current_x
+        dy = clamped_y - self.current_y
 
-        # 1. Native UInput absolute movement (Wayland & X11)
-        if self._uinput:
+        success = False
+        # 1. Hardware-level relative delta event for Wayland compositors (KWin Wayland, Hyprland, Sway)
+        if self._uinput and (dx != 0 or dy != 0):
             try:
-                self._uinput.write(ecodes.EV_ABS, ecodes.ABS_X, clamped_x)
-                self._uinput.write(ecodes.EV_ABS, ecodes.ABS_Y, clamped_y)
+                self._uinput.write(ecodes.EV_REL, ecodes.REL_X, int(dx))
+                self._uinput.write(ecodes.EV_REL, ecodes.REL_Y, int(dy))
                 self._uinput.syn()
-                return {"status": "success", "message": f"Moved mouse to ({clamped_x}, {clamped_y}).", "x": clamped_x, "y": clamped_y}
+                success = True
             except Exception:
                 pass
+        elif self._uinput:
+            success = True
 
-        # 2. PyAutoGUI fallback
+        self.current_x = clamped_x
+        self.current_y = clamped_y
+
+        # 2. PyAutoGUI cursor positioning for X11 & XWayland focused windows
         if pyautogui:
             try:
                 pyautogui.moveTo(clamped_x, clamped_y)
-                return {"status": "success", "message": f"Moved mouse to ({clamped_x}, {clamped_y}).", "x": clamped_x, "y": clamped_y}
-            except Exception as e:
-                return {"status": "error", "message": f"Failed to move mouse: {e}"}
+                success = True
+            except Exception:
+                pass
 
+        if success:
+            return {"status": "success", "message": f"Moved mouse to ({clamped_x}, {clamped_y}).", "x": clamped_x, "y": clamped_y}
         return {"status": "error", "message": "No mouse controller backend available."}
 
     def move_relative(self, dx: int, dy: int) -> dict:
+        success = False
         if self._uinput:
             try:
                 self._uinput.write(ecodes.EV_REL, ecodes.REL_X, int(dx))
                 self._uinput.write(ecodes.EV_REL, ecodes.REL_Y, int(dy))
                 self._uinput.syn()
-                return {"status": "success", "message": f"Moved mouse by ({dx}, {dy})."}
+                success = True
             except Exception:
                 pass
+
+        self.current_x = max(0, min(self.screen_w, self.current_x + int(dx)))
+        self.current_y = max(0, min(self.screen_h, self.current_y + int(dy)))
+
         if pyautogui:
             try:
                 pyautogui.moveRel(int(dx), int(dy))
-                return {"status": "success", "message": f"Moved mouse by ({dx}, {dy})."}
-            except Exception as e:
-                return {"status": "error", "message": f"Failed to move mouse relatively: {e}"}
+                success = True
+            except Exception:
+                pass
+
+        if success:
+            return {"status": "success", "message": f"Moved mouse by ({dx}, {dy}).", "x": self.current_x, "y": self.current_y}
         return {"status": "error", "message": "No mouse controller backend available."}
 
     def click(self, x: Optional[int] = None, y: Optional[int] = None, button: str = "left", clicks: int = 1) -> dict:
         if x is not None and y is not None:
             self.move_to(x, y)
-            time.sleep(0.03)
+            time.sleep(0.04)
 
         btn_clean = button.lower().strip()
         btn_code = ecodes.BTN_LEFT if ecodes else None
@@ -433,6 +449,7 @@ class MouseController:
             elif btn_clean == "middle":
                 btn_code = ecodes.BTN_MIDDLE
 
+        clicked = False
         if self._uinput and btn_code is not None:
             try:
                 for i in range(clicks):
@@ -443,20 +460,21 @@ class MouseController:
                     self._uinput.syn()
                     if clicks > 1 and i < clicks - 1:
                         time.sleep(0.08)
-                loc_str = f" at ({x}, {y})" if (x is not None and y is not None) else ""
-                c_str = f"{clicks}x " if clicks > 1 else ""
-                return {"status": "success", "message": f"{c_str}{btn_clean.capitalize()} clicked{loc_str}."}
+                clicked = True
             except Exception:
                 pass
 
-        if pyautogui:
+        if not clicked and pyautogui:
             try:
                 pyautogui.click(x=x, y=y, button=btn_clean, clicks=clicks)
-                loc_str = f" at ({x}, {y})" if (x is not None and y is not None) else ""
-                c_str = f"{clicks}x " if clicks > 1 else ""
-                return {"status": "success", "message": f"{c_str}{btn_clean.capitalize()} clicked{loc_str}."}
+                clicked = True
             except Exception as e:
                 return {"status": "error", "message": f"Click failed: {e}"}
+
+        if clicked:
+            loc_str = f" at ({x}, {y})" if (x is not None and y is not None) else ""
+            c_str = f"{clicks}x " if clicks > 1 else ""
+            return {"status": "success", "message": f"{c_str}{btn_clean.capitalize()} clicked{loc_str}."}
 
         return {"status": "error", "message": "No mouse backend available."}
 
@@ -467,45 +485,48 @@ class MouseController:
         return self.click(x=x, y=y, button="right", clicks=1)
 
     def drag_to(self, to_x: int, to_y: int, from_x: Optional[int] = None, from_y: Optional[int] = None, button: str = "left", steps: int = 15, duration: float = 0.2) -> dict:
-        if from_x is not None and from_y is not None:
-            self.move_to(from_x, from_y)
-            time.sleep(0.04)
+        start_x = from_x if from_x is not None else self.current_x
+        start_y = from_y if from_y is not None else self.current_y
+
+        self.move_to(start_x, start_y)
+        time.sleep(0.04)
 
         btn_clean = button.lower().strip()
         btn_code = ecodes.BTN_LEFT if ecodes else None
         if ecodes and btn_clean == "right":
             btn_code = ecodes.BTN_RIGHT
 
+        dragged = False
         if self._uinput and btn_code is not None:
             try:
                 self._uinput.write(ecodes.EV_KEY, btn_code, 1)
                 self._uinput.syn()
                 time.sleep(0.04)
 
-                sx = from_x if from_x is not None else to_x
-                sy = from_y if from_y is not None else to_y
                 step_delay = duration / max(1, steps)
                 for s in range(1, steps + 1):
-                    cx = int(sx + (to_x - sx) * (s / steps))
-                    cy = int(sy + (to_y - sy) * (s / steps))
+                    cx = int(start_x + (to_x - start_x) * (s / steps))
+                    cy = int(start_y + (to_y - start_y) * (s / steps))
                     self.move_to(cx, cy)
                     time.sleep(step_delay)
 
                 self._uinput.write(ecodes.EV_KEY, btn_code, 0)
                 self._uinput.syn()
-                return {"status": "success", "message": f"Dragged mouse to ({to_x}, {to_y})."}
+                dragged = True
             except Exception:
                 pass
 
-        if pyautogui:
+        if not dragged and pyautogui:
             try:
-                if from_x is not None and from_y is not None:
-                    pyautogui.moveTo(from_x, from_y)
                 pyautogui.dragTo(to_x, to_y, duration=duration, button=btn_clean)
-                return {"status": "success", "message": f"Dragged mouse to ({to_x}, {to_y})."}
+                dragged = True
             except Exception as e:
                 return {"status": "error", "message": f"Drag failed: {e}"}
 
+        self.current_x = to_x
+        self.current_y = to_y
+        if dragged:
+            return {"status": "success", "message": f"Dragged mouse to ({to_x}, {to_y})."}
         return {"status": "error", "message": "No mouse backend available."}
 
 mouse_controller = MouseController.get_instance()
@@ -527,6 +548,7 @@ EDITOR_CLASSES = [
 def focus_window_by_pattern(pattern: str, pick_other: bool = False) -> bool:
     """Activates and raises a window matching the pattern across KDE Plasma 6/5, GNOME, X11, Wayland.
     Supports smart category expansion (terminal, browser, editor) and switching between multiple windows.
+    Prevents false positives so unlaunched applications can be cleanly launched.
     """
     p_lower = pattern.lower().strip()
     focused = False
@@ -539,12 +561,38 @@ def focus_window_by_pattern(pattern: str, pick_other: bool = False) -> bool:
     elif p_lower in ("code", "editor", "vscode", "محرر"):
         targets.extend(EDITOR_CLASSES)
 
-    targets_json = json.dumps(targets)
-    pick_other_js = "true" if pick_other else "false"
-
-    # 1. KDE Plasma KWin Scripting (Wayland & X11 on Arch Linux / Fedora / Kubuntu)
+    # 1. Native KDE Plasma 6 & 5 WindowsRunner (sub-20ms activation on Arch Linux Wayland & X11)
     qdbus_cmd = "qdbus6" if shutil.which("qdbus6") else ("qdbus" if shutil.which("qdbus") else None)
     if qdbus_cmd:
+        for tgt in targets:
+            try:
+                res = subprocess.run(
+                    [qdbus_cmd, "--literal", "org.kde.KWin", "/WindowsRunner", "org.kde.krunner1.Match", tgt],
+                    capture_output=True,
+                    text=True,
+                    timeout=1.0
+                )
+                if res.returncode == 0 and res.stdout:
+                    matches = re.findall(r'\[Argument:\s*\(sssida\{sv\}\)\s*\"([^\"]+)\",\s*\"([^\"]*)\",\s*\"([^\"]*)\"', res.stdout)
+                    valid_matches = [m for m in matches if "Desktop " not in m[1]]
+                    if valid_matches:
+                        chosen_match = valid_matches[1] if (pick_other and len(valid_matches) > 1) else valid_matches[0]
+                        run_res = subprocess.run(
+                            [qdbus_cmd, "org.kde.KWin", "/WindowsRunner", "org.kde.krunner1.Run", chosen_match[0], ""],
+                            capture_output=True,
+                            timeout=1.0
+                        )
+                        if run_res.returncode == 0:
+                            focused = True
+                            time.sleep(0.06)
+                            break
+            except Exception:
+                pass
+
+    # 2. KDE Plasma KWin Scripting fallback
+    if not focused and qdbus_cmd:
+        targets_json = json.dumps(targets)
+        pick_other_js = "true" if pick_other else "false"
         script = f"""
         var targets = {targets_json};
         var pickOther = {pick_other_js};
@@ -572,8 +620,8 @@ def focus_window_by_pattern(pattern: str, pick_other: bool = False) -> bool:
             }}
         }}
 
-        var chosen = null;
         if (matches.length > 0) {{
+            var chosen = matches[0];
             if (pickOther && matches.length > 1) {{
                 for (var m = 0; m < matches.length; ++m) {{
                     if (matches[m] !== activeWin) {{
@@ -582,8 +630,6 @@ def focus_window_by_pattern(pattern: str, pick_other: bool = False) -> bool:
                     }}
                 }}
             }}
-            if (!chosen) chosen = matches[0];
-
             if (chosen.desktops && chosen.desktops.length > 0 && workspace.currentDesktop) {{
                 var onCurrent = false;
                 for (var d = 0; d < chosen.desktops.length; ++d) {{
@@ -593,7 +639,6 @@ def focus_window_by_pattern(pattern: str, pick_other: bool = False) -> bool:
                     workspace.currentDesktop = chosen.desktops[0];
                 }}
             }}
-
             chosen.minimized = false;
             workspace.activeWindow = chosen;
             if (workspace.raiseWindow) workspace.raiseWindow(chosen);
@@ -624,7 +669,6 @@ def focus_window_by_pattern(pattern: str, pick_other: bool = False) -> bool:
                     capture_output=True,
                     timeout=1.0
                 )
-                focused = True
         except Exception:
             pass
         finally:
@@ -634,7 +678,7 @@ def focus_window_by_pattern(pattern: str, pick_other: bool = False) -> bool:
                 except Exception:
                     pass
 
-    # 2. wmctrl (Standard on Pop!_OS / X11 / XWayland)
+    # 3. wmctrl (Standard on Pop!_OS / X11 / XWayland)
     if not focused and shutil.which("wmctrl"):
         for tgt in targets:
             try:
@@ -649,7 +693,7 @@ def focus_window_by_pattern(pattern: str, pick_other: bool = False) -> bool:
             except Exception:
                 pass
 
-    # 3. xdotool (X11 / XWayland)
+    # 4. xdotool (X11 / XWayland)
     if not focused and shutil.which("xdotool"):
         for tgt in targets:
             try:
