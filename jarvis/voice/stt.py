@@ -25,10 +25,13 @@ NOISE_PHRASES = {
 }
 
 def ensure_hardware_mic_volume():
-    """Normalizes ALSA and PipeWire levels so mic capture is clear and steady."""
+    """Normalizes ALSA and PipeWire levels so mic capture is clear, sensitive, and unclipped."""
     try:
-        subprocess.run(["pactl", "set-source-volume", "@DEFAULT_SOURCE@", "60%"], capture_output=True)
+        subprocess.run(["pactl", "set-source-volume", "@DEFAULT_SOURCE@", "75%"], capture_output=True)
         subprocess.run(["pactl", "set-source-mute", "@DEFAULT_SOURCE@", "0"], capture_output=True)
+        # ALSA hardware calibration: remove +10dB internal boost to prevent distortion, set Capture to 48 (sweet spot)
+        subprocess.run(["amixer", "-c", "0", "set", "Capture", "48"], capture_output=True)
+        subprocess.run(["amixer", "-c", "0", "set", "Internal Mic Boost", "0"], capture_output=True)
     except Exception:
         pass
 
@@ -391,10 +394,6 @@ class NativeSpeechRecognizer:
 
         recognized_text = " ".join(recognized_segments).strip()
 
-        # If Vosk heard no words, it was not human speech
-        if not recognized_text:
-            return ""
-
         # Biomarker / Voice Genetic Gate check:
         # Rejects random background voices, family/room chatter, and TV!
         from jarvis.voice.biometrics import voice_dna
@@ -421,19 +420,36 @@ class NativeSpeechRecognizer:
         return str(wav_file)
 
     def transcribe_audio_file(self, audio_path: str) -> str:
-        """Transcribes audio using ultra-fast local Vosk engine (<5ms)."""
-        # Tier 1: Instant Streaming Vosk Result (0ms - decoded concurrently while user spoke)
-        if self.last_streaming_transcription:
-            transcription = self.last_streaming_transcription
-            self.last_streaming_transcription = ""
-            return transcription
-
+        """
+        Transcribes audio using high-accuracy open-vocabulary Google STT,
+        with ultra-fast local Vosk as instantaneous fallback.
+        """
         if not audio_path or not os.path.exists(audio_path):
             return ""
 
         transcription = ""
 
-        # Tier 2: Offline Vosk file pass (<50ms local inference)
+        # Tier 1: Cloud Google Speech Recognition (vast vocabulary, highly resilient to accents)
+        try:
+            with sr.AudioFile(audio_path) as source:
+                audio_data = self.recognizer.record(source)
+                google_text = self.recognizer.recognize_google(audio_data, language="en-US")
+                if google_text and len(google_text.strip()) > 1:
+                    transcription = google_text.strip()
+                    self.last_streaming_transcription = ""
+                    return transcription
+        except sr.UnknownValueError:
+            pass
+        except Exception:
+            pass
+
+        # Tier 2: Instant Streaming Vosk Result (<5ms)
+        if self.last_streaming_transcription:
+            transcription = self.last_streaming_transcription
+            self.last_streaming_transcription = ""
+            return transcription
+
+        # Tier 3: Offline Vosk file pass (<50ms local inference)
         if self.vosk_model:
             try:
                 import vosk
