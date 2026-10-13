@@ -415,15 +415,27 @@ class NativeSpeechRecognizer:
 
         transcription = ""
 
-        # Tier 2: Cloud Google Speech Recognition fallback (vast vocabulary)
+        # Tier 2: Cloud Google Speech Recognition fallback (English, British, Slang & Arabic)
         try:
             with sr.AudioFile(audio_path) as source:
                 audio_data = self.recognizer.record(source)
-                google_text = self.recognizer.recognize_google(audio_data, language="en-US")
-                if google_text and len(google_text.strip()) > 1:
-                    transcription = google_text.strip()
-                    self.last_streaming_transcription = ""
-                    return transcription
+                # First try English (handles British English and international slang)
+                try:
+                    google_text = self.recognizer.recognize_google(audio_data, language="en-GB")
+                    if google_text and len(google_text.strip()) > 1:
+                        self.last_streaming_transcription = ""
+                        return google_text.strip()
+                except Exception:
+                    pass
+
+                # If English didn't decode, try Arabic
+                try:
+                    google_text_ar = self.recognizer.recognize_google(audio_data, language="ar-SA")
+                    if google_text_ar and len(google_text_ar.strip()) > 1:
+                        self.last_streaming_transcription = ""
+                        return google_text_ar.strip()
+                except Exception:
+                    pass
         except Exception:
             pass
 

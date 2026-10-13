@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import time
 import math
 import struct
@@ -177,8 +178,14 @@ class SmoothSpeaker:
                 visualizer.moving_print(text, prefix=prefix)
             return True
 
-        # 1. Primary: Silky Smooth Microsoft Neural Voice via Edge-TTS (Sonia)
-        for v in [self.voice, self.fallback_voice]:
+        clean_text = text.strip()[:400]
+
+        # Automatic Arabic speech detection: switch to Arabic neural voice if text contains Arabic
+        has_arabic = bool(re.search(r"[\u0600-\u06FF]", clean_text))
+        voices_to_try = ["ar-JO-SanaNeural", "ar-EG-SalmaNeural"] if has_arabic else [self.voice, self.fallback_voice]
+
+        # 1. Primary: Silky Smooth Microsoft Neural Voice via Edge-TTS (Sonia or Arabic Sana)
+        for v in voices_to_try:
             try:
                 # Instant disk cache check (0ms network latency)
                 cache_key = hashlib.md5(f"{v}_{clean_text}".encode("utf-8")).hexdigest()[:12]
@@ -195,8 +202,9 @@ class SmoothSpeaker:
             except Exception:
                 continue
 
-        # 2. Secondary: Smooth Google Neural Voice with British accent (1.0s fast fallback)
+        # 2. Secondary: Smooth Google Neural Voice (British accent or Arabic)
         try:
+            lang = "ar" if has_arabic else "en"
             audio_file = self._generate_google_tts(clean_text)
             if audio_file and os.path.exists(audio_file):
                 return self._play_file_with_interrupt(audio_file, text=clean_text, prefix=prefix, live_print=live_print)
