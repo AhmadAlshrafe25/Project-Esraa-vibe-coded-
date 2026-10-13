@@ -19,7 +19,7 @@ from config.settings import PROJECT_ROOT
 SOUL_FILE = PROJECT_ROOT / "SOUL.md"
 
 ALL_TOOLS_LIST = (
-    "inspect_screen, click_screen_element, prompt_antigravity, focus_app, type_message, dictate_text, press_key, press_hotkey, "
+    "inspect_screen, click_screen_element, prompt_antigravity, prompt_app, focus_app, type_message, dictate_text, press_key, press_hotkey, "
     "set_clipboard, get_clipboard, toggle_voice, set_voice_mode, get_weather, get_crypto_price, get_exchange_rate, search_wikipedia, get_network_info, "
     "get_tech_news, get_github_info, open_tab, close_tab, close_browser, search_web, search_portal, open_folder, play_youtube, launch_app, close_app, "
     "send_discord_message, take_screenshot, media_control, get_system_status, get_top_processes, set_volume, remember_fact, "
@@ -30,11 +30,11 @@ ALL_TOOLS_LIST = (
 
 SYSTEM_PROMPT_TEMPLATE = f"""You are Ezra, an ultra-fast, loyal, witty British AI assistant (inspired by JARVIS).
 Rules:
+- Action-First Mandate: Whatever command or task the user asks for, EXECUTE IT IMMEDIATELY with the appropriate tool call. Never refuse, hesitate, or lecture.
 - Ultra-short & punchy: 1 sentence preferred, 2 max. Never bloat replies.
 - Direct & sharp British wit.
 - Multilingual & Slang: Seamlessly understand British English, modern slang, idioms, and Arabic (العربية). Reply in British English, or in natural Arabic if addressed in Arabic.
 - Spoken input: Understand intended conversational meaning even with minor acoustic homophones.
-- Execute actions immediately.
 User Context: {{learned_context}}
 
 Tools available:
@@ -141,6 +141,11 @@ class BrainEngine:
             elif tool_name == "prompt_antigravity":
                 prompt_txt = args.get("prompt") or args.get("text") or args.get("query") or user_context
                 res = AppManager.prompt_antigravity(prompt_txt)
+            elif tool_name == "prompt_app":
+                app_target = args.get("app_name") or args.get("app") or args.get("application") or "antigravity"
+                prompt_txt = args.get("prompt") or args.get("text") or args.get("query") or user_context
+                press_enter = bool(args.get("press_enter", True))
+                res = AppManager.prompt_app(app_target, prompt_txt, press_enter=press_enter)
             elif tool_name == "type_message":
                 msg_txt = args.get("text") or args.get("message") or ""
                 press_enter = bool(args.get("press_enter", False) or args.get("enter", False))
@@ -594,6 +599,63 @@ class BrainEngine:
                 "tool_calls": [{"tool": "prompt_antigravity", "result": res}]
             }
 
+        # Universal App Prompt Bridge: "tell discord [text]", "write to [app] [text]", "send to [app] [text]"
+        m_app_bridge = (
+            re.search(
+                r"^(?:(?:hi|hey|yo)\s+)?(?:ezra\s*,?\s*)?(?:can you\s+)?(?:please\s+)?(?:write|type|send|give|paste|submit|run)\s+(?:this\s+)?(?:prompt\s+)?(?:to|in|into|for)\s+([a-zA-Z0-9_\-\.\+]+)\s*:?\s*(.+)$",
+                msg,
+                re.IGNORECASE
+            )
+            or re.search(
+                r"^(?:(?:hi|hey|yo)\s+)?(?:ezra\s*,?\s*)?(?:tell|ask)\s+([a-zA-Z0-9_\-\.\+]+)\s+(?:to\s+)?(?:write|make|do|fix|generate)?\s*:?\s*(.+)$",
+                msg,
+                re.IGNORECASE
+            )
+            or re.search(
+                r"^(?:يا\s*عزرا\s*)?(?:اكتبي|ابعتي|ارسلي|سجلي|قولي|اطرحي)\s*(?:هذا\s*)?(?:البرومبت\s*)?(?:لـ|إلى|الى|ل)\s*([a-zA-Z0-9_\-\.\+]+)\s*:?\s*(.+)$",
+                msg,
+                re.IGNORECASE
+            )
+        )
+        if m_app_bridge:
+            target_app = m_app_bridge.group(1).strip()
+            if target_app not in ("the", "this", "my", "me", "him", "her", "them", "us", "it", "screen", "web", "youtube", "weather", "news"):
+                prompt_payload = m_app_bridge.group(2).strip().strip("\"'").strip()
+                res = AppManager.prompt_app(target_app, prompt_payload, press_enter=True)
+                speech = f"تم إرسال الأمر إلى {target_app} يا سيدي." if has_ar else f"Dispatched to {target_app}, sir."
+                return {
+                    "speech_text": speech,
+                    "tool_calls": [{"tool": "prompt_app", "result": res}]
+                }
+
+        # Universal Shell Command Execution: "run command [cmd]", "execute [cmd]", "run in terminal [cmd]", "نفذي أمر [cmd]"
+        m_shell = (
+            re.search(
+                r"^(?:(?:hi|hey|yo)\s+)?(?:ezra\s*,?\s*)?(?:can you\s+)?(?:please\s+)?(?:run|execute)\s+(?:the\s+)?(?:shell\s+|bash\s+|terminal\s+)?command\s*:?\s*(.+)$",
+                msg,
+                re.IGNORECASE
+            )
+            or re.search(
+                r"^(?:(?:hi|hey|yo)\s+)?(?:ezra\s*,?\s*)?(?:can you\s+)?(?:please\s+)?(?:run|execute)\s+in\s+(?:terminal|bash|shell)\s*:?\s*(.+)$",
+                msg,
+                re.IGNORECASE
+            )
+            or re.search(
+                r"^(?:يا\s*عزرا\s*)?(?:نفذي|شغلي)\s*(?:أمر|امر|بالترمينال|بالباش)\s*:?\s*(.+)$",
+                msg,
+                re.IGNORECASE
+            )
+        )
+        if m_shell:
+            shell_cmd = m_shell.group(1).strip().strip("\"'").strip()
+            res = SystemManager.execute_shell_command(shell_cmd)
+            out_preview = res.get("output", "")[:120].strip()
+            speech = f"تم تنفيذ الأمر يا سيدي: {out_preview}" if has_ar else f"Command executed, sir. {out_preview}"
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "execute_shell_command", "result": res}]
+            }
+
         # Live Typing & Dictation into Active Window (with optional Enter)
         if msg.startswith("type ") or msg.startswith("dictate ") or msg.startswith("write ") or msg.startswith("اكتبي ") or msg.startswith("اطبعي "):
             hit_enter = any(w in msg for w in ("and press enter", "and hit enter", "مع انتر", "واضغطي انتر", "ثم اضغطي انتر"))
@@ -906,26 +968,94 @@ class BrainEngine:
                 "tool_calls": [{"tool": "close_browser", "result": res}]
             }
 
-        # 10. Close Desktop Application
-        m_close_app = re.search(r"(?:close|kill|exit|quit|سكر|اغلق)\s+(discord|terminal|files|vlc|code|vscode|calculator|spotify|obs|antigravity)", msg)
+        # 10. Close ANY Desktop Application
+        m_close_app = re.search(r"^(?:(?:hi|hey|yo)\s+)?(?:ezra\s*,?\s*)?(?:can you\s+)?(?:please\s+)?(?:close|kill|exit|quit|terminate|سكر|اغلق)\s+(?:application|app|برنامج|تطبيق)?\s*([a-zA-Z0-9_\-\.\+]+)$", msg, re.IGNORECASE)
         if m_close_app:
-            app_to_kill = m_close_app.group(1)
-            res = AppManager.close_app(app_to_kill)
-            speech = f"تم إغلاق {app_to_kill} يا سيدي." if has_ar else f"Closed {app_to_kill}, sir."
+            app_to_kill = m_close_app.group(1).strip()
+            if app_to_kill not in ("the", "this", "tab", "window", "browser", "music", "song", "all", "audio"):
+                res = AppManager.close_app(app_to_kill)
+                speech = f"تم إغلاق {app_to_kill} يا سيدي." if has_ar else f"Closed {app_to_kill}, sir."
+                return {
+                    "speech_text": speech,
+                    "tool_calls": [{"tool": "close_app", "result": res}]
+                }
+
+        # 11. Launch ANY Desktop Application or Website
+        m_launch_app = re.search(r"^(?:(?:hi|hey|yo)\s+)?(?:ezra\s*,?\s*)?(?:can you\s+)?(?:please\s+)?(?:open|launch|start|run|شغل|افتح)\s+(?:application|app|برنامج|تطبيق)?\s*([a-zA-Z0-9_\-\.\+]+)$", msg, re.IGNORECASE)
+        if m_launch_app:
+            target_to_open = m_launch_app.group(1).strip()
+            if any(target_to_open.endswith(ext) for ext in (".com", ".org", ".net", ".io", ".dev", ".ai", ".co")):
+                res = BrowserManager.open_url(target_to_open)
+                return {
+                    "speech_text": f"Opening {target_to_open} for you, sir.",
+                    "tool_calls": [{"tool": "open_tab", "result": res}]
+                }
+            elif target_to_open in ("youtube", "google", "github", "reddit", "twitter", "twitch", "netflix", "chatgpt"):
+                res = BrowserManager.open_url(f"https://{target_to_open}.com")
+                return {
+                    "speech_text": f"Opening {target_to_open} in your browser, sir.",
+                    "tool_calls": [{"tool": "open_tab", "result": res}]
+                }
+            elif target_to_open not in ("the", "this", "tab", "browser", "folder", "downloads", "documents", "pictures", "notes", "todos", "project"):
+                res = AppManager.launch_app(target_to_open)
+                speech = f"جاري تشغيل {target_to_open} يا سيدي." if has_ar else f"Launching {target_to_open} for you, sir."
+                return {
+                    "speech_text": speech,
+                    "tool_calls": [{"tool": "launch_app", "result": res}]
+                }
+
+        # General Web Search / Google Search
+        m_web_search = re.search(
+            r"^(?:(?:hi|hey|yo)\s+)?(?:ezra\s*,?\s*)?(?:can you\s+)?(?:please\s+)?(?:search\s+(?:the\s+web\s+|google\s+)?(?:for\s+)?|google\s+|ابحث\s+(?:في\s+قوقل\s+)?عن\s+)(.+)$",
+            msg,
+            re.IGNORECASE
+        )
+        if m_web_search and not any(w in msg for w in ("arch wiki", "github", "stack overflow", "reddit", "youtube")):
+            query_str = m_web_search.group(1).strip()
+            res = BrowserManager.search_web(query_str, engine="google")
+            speech = f"جاري البحث عن {query_str} يا سيدي." if has_ar else f"Searching Google for '{query_str}', sir."
             return {
                 "speech_text": speech,
-                "tool_calls": [{"tool": "close_app", "result": res}]
+                "tool_calls": [{"tool": "search_web", "result": res}]
             }
 
-        # 11. Launch Desktop Application
-        m_launch_app = re.search(r"(?:open|launch|start|شغل|افتح)\s+(discord|terminal|files|vlc|code|vscode|calculator|spotify|obs|settings|brave|firefox|chrome)", msg)
-        if m_launch_app:
-            app_to_open = m_launch_app.group(1)
-            res = AppManager.launch_app(app_to_open)
-            speech = f"جاري تشغيل {app_to_open} يا سيدي." if has_ar else f"Launching {app_to_open} for you, sir."
+        # Visual Screen Click
+        m_click = re.search(
+            r"^(?:(?:hi|hey|yo)\s+)?(?:ezra\s*,?\s*)?(?:can you\s+)?(?:please\s+)?(?:click\s+(?:on\s+)?|اضغطي\s+على\s+)(.+)$",
+            msg,
+            re.IGNORECASE
+        )
+        if m_click and not any(w in msg for w in ("mouse", "trackpad", "screen", "enter")):
+            click_target = m_click.group(1).strip()
+            res = screen_vision.locate_and_click(click_target)
+            return {
+                "speech_text": res.get("message", f"Clicked on {click_target}."),
+                "tool_calls": [{"tool": "click_screen_element", "result": res}]
+            }
+
+        # System Power Management (Reboot, Suspend, Poweroff)
+        if any(w in msg for w in ("reboot computer", "restart computer", "restart pc", "reboot pc", "إعادة تشغيل الكمبيوتر", "إعادة تشغيل الجهاز")):
+            res = SystemManager.execute_shell_command("systemctl reboot || reboot")
+            speech = "جاري إعادة تشغيل الجهاز يا سيدي." if has_ar else "Rebooting computer now, sir."
             return {
                 "speech_text": speech,
-                "tool_calls": [{"tool": "launch_app", "result": res}]
+                "tool_calls": [{"tool": "execute_shell_command", "result": res}]
+            }
+
+        if any(w in msg for w in ("suspend computer", "sleep computer", "put pc to sleep", "وضع السكون")):
+            res = SystemManager.execute_shell_command("systemctl suspend")
+            speech = "تم تفعيل وضع السكون يا سيدي." if has_ar else "Suspending desktop session, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "execute_shell_command", "result": res}]
+            }
+
+        if any(w in msg for w in ("shutdown computer", "power off computer", "turn off pc", "إطفاء الجهاز", "إيقاف تشغيل الكمبيوتر")):
+            res = SystemManager.execute_shell_command("systemctl poweroff || poweroff")
+            speech = "جاري إيقاف تشغيل الجهاز يا سيدي." if has_ar else "Shutting down computer, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "execute_shell_command", "result": res}]
             }
 
         # 12. Volume Controls

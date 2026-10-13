@@ -357,6 +357,20 @@ class AppManager:
             except Exception as e:
                 return {"status": "error", "message": f"Failed to launch Flatpak {flatpak_id}: {e}"}
 
+        # 1.5. Dynamic Flatpak lookup for any installed app
+        if shutil.which("flatpak"):
+            try:
+                fp_res = subprocess.run(["flatpak", "list", "--app", "--columns=application,name"], capture_output=True, text=True, timeout=1.0)
+                if fp_res.returncode == 0:
+                    for line in fp_res.stdout.splitlines():
+                        cols = line.strip().split()
+                        if cols and any(app_clean in c.lower() for c in cols):
+                            f_id = cols[0]
+                            subprocess.Popen(["flatpak", "run", f_id], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                            return {"status": "success", "message": f"Launched {app_name} via Flatpak ({f_id})."}
+            except Exception:
+                pass
+
         # 2. Check native predefined aliases or direct executable binaries
         binary_candidates = NATIVE_APPS.get(app_clean, [app_clean])
         for binary in binary_candidates:
@@ -464,6 +478,27 @@ class AppManager:
         return {
             "status": "success",
             "message": f"Successfully submitted prompt to Antigravity: '{preview}'."
+        }
+
+    @staticmethod
+    def prompt_app(app_name: str, text: str, press_enter: bool = True) -> dict:
+        """Universal Application Bridge: Focuses ANY application window,
+        types/pastes the prompt or text, and presses Enter to submit.
+        """
+        app_clean = app_name.lower().strip()
+        if any(g in app_clean for g in ("antigravity", "anti-gravity", "antique gravity", "gravity")):
+            return AppManager.prompt_antigravity(text)
+
+        # 1. Bring application window to foreground
+        AppManager.focus_app(app_clean)
+        time.sleep(0.35)
+
+        # 2. Type/paste text into application
+        res = AppManager.type_message(text, press_enter=press_enter, delay_sec=0.1)
+        preview = text[:50] + ("..." if len(text) > 50 else "")
+        return {
+            "status": "success",
+            "message": f"Submitted to {app_name}: '{preview}'."
         }
 
     @staticmethod

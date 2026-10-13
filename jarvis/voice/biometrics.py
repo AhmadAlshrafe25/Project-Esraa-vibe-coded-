@@ -24,8 +24,9 @@ SAFE_READ_TOOLS = {
     "deep_research", "media_control", "close_tab", "close_browser", "git_pull", "sync_gdrive",
     "get_top_processes", "lock_screen", "add_note", "get_notes", "clear_notes",
     "add_todo", "get_todos", "clear_todos", "get_recent_downloads", "search_portal", "open_folder",
-    "prompt_antigravity", "focus_app", "type_message", "dictate_text", "press_key", "press_hotkey",
-    "set_clipboard", "get_clipboard", "take_screenshot"
+    "prompt_antigravity", "prompt_app", "focus_app", "launch_app", "close_app",
+    "type_message", "dictate_text", "press_key", "press_hotkey",
+    "set_clipboard", "get_clipboard", "take_screenshot", "execute_shell_command"
 }
 
 class VoiceBiometrics:
@@ -324,7 +325,11 @@ class VoiceBiometrics:
     def is_action_permitted(self, tool_name: str, tier: str = None) -> Tuple[bool, str]:
         """
         Enforces access control on actions based on the verified security tier.
+        In default personal mode (strict_mode=False), all actions from the master are unconditionally permitted.
         """
+        if not self.strict_mode:
+            return True, "permitted"
+
         if tier is None:
             tier = self.last_tier
 
