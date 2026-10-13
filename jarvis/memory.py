@@ -137,9 +137,13 @@ Example format:
 {{"learned": true, "topic": "voice_preference", "content": "Prefers a smooth, natural voice and hates robotic voices."}}
 Return ONLY valid JSON.
 """
-            resp = client.models.generate_content(
-                model="gemini-3.5-flash-lite",
-                contents=prompt
+            resp = await asyncio.wait_for(
+                asyncio.to_thread(
+                    client.models.generate_content,
+                    model="gemini-robotics-er-2-preview",
+                    contents=prompt
+                ),
+                timeout=3.5
             )
             if resp and resp.text:
                 import re

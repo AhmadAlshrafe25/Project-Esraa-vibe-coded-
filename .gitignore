@@ -30,6 +30,7 @@ wheels/
 credentials.json
 token.json
 *.db
+*.db-journal
 *.sqlite
 *.sqlite3
 
