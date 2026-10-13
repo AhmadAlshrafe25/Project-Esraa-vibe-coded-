@@ -8,11 +8,30 @@ cd "$DIR" || exit 1
 
 # If launched from GUI/Desktop without a terminal, spawn an interactive terminal
 if [ "$1" != "terminal" ] && { [ ! -t 0 ] || [ ! -t 1 ]; }; then
-    if command -v cosmic-term >/dev/null 2>&1; then
-        exec cosmic-term --title "Project Ezra // Neural Core" -- bash -c "\"$0\" terminal; exec bash"
-    elif command -v xterm >/dev/null 2>&1; then
-        exec xterm -title "Project Ezra // Neural Core" -geometry 100x30 -e "\"$0\" terminal"
-    fi
+    for term in kitty alacritty gnome-terminal konsole xfce4-terminal ptyxis foot wezterm xterm cosmic-term; do
+        if command -v "$term" >/dev/null 2>&1; then
+            case "$term" in
+                kitty)
+                    exec kitty --title "Project Ezra // Neural Core" -d "$DIR" "$0" terminal ;;
+                alacritty)
+                    exec alacritty --title "Project Ezra // Neural Core" --working-directory "$DIR" -e "$0" terminal ;;
+                gnome-terminal)
+                    exec gnome-terminal --title="Project Ezra // Neural Core" --working-directory="$DIR" -- "$0" terminal ;;
+                konsole)
+                    exec konsole --title "Project Ezra // Neural Core" --workdir "$DIR" -e "$0" terminal ;;
+                xfce4-terminal)
+                    exec xfce4-terminal --title="Project Ezra // Neural Core" --working-directory="$DIR" -e "\"$0\" terminal" ;;
+                foot)
+                    exec foot --title="Project Ezra // Neural Core" -D "$DIR" "$0" terminal ;;
+                wezterm)
+                    exec wezterm start --cwd "$DIR" "$0" terminal ;;
+                cosmic-term)
+                    exec cosmic-term --title "Project Ezra // Neural Core" -- bash -c "\"$0\" terminal; exec bash" ;;
+                xterm)
+                    exec xterm -title "Project Ezra // Neural Core" -geometry 110x32 -e "\"$0\" terminal" ;;
+            esac
+        fi
+    done
 fi
 
 # Set window title
