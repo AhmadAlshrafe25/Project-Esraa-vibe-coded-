@@ -1330,7 +1330,13 @@ class BrainEngine:
                 q_s = re.sub(r'^(?:for|about|on)\s+', '', q_s).strip()
                 if q_s:
                     detected_actions.append(("search_web", {"query": q_s, "engine": "google"}, f"Searching Google for '{q_s}'"))
-                    continue
+            # Voice Mode Switching (British neural vs Robotic vocoder)
+            if any(w in p for w in ("british voice", "british ezra", "original voice", "normal voice", "neural voice", "smooth voice", "human voice", "stop robot voice", "turn off robot voice", "صوت طبيعي", "صوت عادي", "صوت بريطاني", "رجعي صوتك", "صوتك العادي", "صوت سونيا")):
+                detected_actions.append(("set_voice_mode", {"mode": "neural"}, "Restored British neural voice"))
+                continue
+            if any(w in p for w in ("robot voice", "robotic voice", "robot mode", "turn on robot voice", "صوت روبوت", "صوت آلي")):
+                detected_actions.append(("set_voice_mode", {"mode": "robotic"}, "Activated cybernetic robotic voice"))
+                continue
 
 
         # If one or more semantic actions were detected, execute all of them!
@@ -1973,10 +1979,10 @@ class BrainEngine:
                 "tool_calls": [{"tool": "set_voice_mode", "result": {"mode": "robotic"}}]
             }
 
-        if any(w in msg for w in ("neural voice", "normal voice", "smooth voice", "human voice", "صوت طبيعي", "صوت عادي")):
+        if any(w in msg for w in ("neural voice", "normal voice", "smooth voice", "human voice", "british voice", "british ezra", "original voice", "return british ezra", "sound british", "stop robot voice", "turn off robot voice", "صوت طبيعي", "صوت عادي", "صوت بريطاني", "رجعي صوتك", "صوتك العادي", "صوت سونيا")):
             voice_speaker.set_robotic_mode(False)
             return {
-                "speech_text": "Silky neural voice restored, sir.",
+                "speech_text": "Natural British neural voice restored, sir.",
                 "tool_calls": [{"tool": "set_voice_mode", "result": {"mode": "neural"}}]
             }
 
