@@ -396,15 +396,26 @@ class NativeSpeechRecognizer:
 
     def transcribe_audio_file(self, audio_path: str) -> str:
         """
-        Transcribes audio using high-accuracy open-vocabulary Google STT,
-        with ultra-fast local Vosk as instantaneous fallback.
+        Ultra-low-latency transcription:
+        1. Instant Streaming Vosk Result (<5ms) from full 1.8GB model (200k+ words).
+        2. Google Cloud STT fallback if local stream was incomplete.
         """
+        # Tier 1: Instant Streaming result (already decoded in real time while user spoke!)
+        if self.last_streaming_transcription and len(self.last_streaming_transcription.split()) >= 2:
+            transcription = self.last_streaming_transcription
+            self.last_streaming_transcription = ""
+            return transcription
+
         if not audio_path or not os.path.exists(audio_path):
+            if self.last_streaming_transcription:
+                txt = self.last_streaming_transcription
+                self.last_streaming_transcription = ""
+                return txt
             return ""
 
         transcription = ""
 
-        # Tier 1: Cloud Google Speech Recognition (vast vocabulary, highly resilient to accents)
+        # Tier 2: Cloud Google Speech Recognition fallback (vast vocabulary)
         try:
             with sr.AudioFile(audio_path) as source:
                 audio_data = self.recognizer.record(source)
@@ -413,12 +424,10 @@ class NativeSpeechRecognizer:
                     transcription = google_text.strip()
                     self.last_streaming_transcription = ""
                     return transcription
-        except sr.UnknownValueError:
-            pass
         except Exception:
             pass
 
-        # Tier 2: Instant Streaming Vosk Result (<5ms)
+        # Fallback to whatever streaming Vosk caught
         if self.last_streaming_transcription:
             transcription = self.last_streaming_transcription
             self.last_streaming_transcription = ""

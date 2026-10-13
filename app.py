@@ -87,7 +87,7 @@ def continuous_conversation_loop():
     silence_count = 0
     while True:
         try:
-            audio_file = stt_engine.record_until_finished(max_wait_sec=12.0, silence_threshold_sec=2.0)
+            audio_file = stt_engine.record_until_finished(max_wait_sec=12.0, silence_threshold_sec=1.1)
             
             if not audio_file:
                 silence_count += 1
