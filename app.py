@@ -235,10 +235,13 @@ def continuous_conversation_loop():
                         loop_state["last_interaction_time"] = time.time()
                         if isinstance(turn_res, dict) and not turn_res.get("should_continue", True):
                             loop_state["is_awake"] = False
+                        else:
+                            print("\033[1;36m[🎙️ Ready for next command — Speak freely into your headset]\033[0m\n")
                     else:
                         has_ar = bool(re.search(r"[\u0600-\u06FF]", transcription))
                         greet = "أهلاً بك يا سيدي، في خدمتك دائماً." if has_ar else "Good day, sir. At your command."
                         voice_speaker.speak(greet, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
+                        print("\033[1;36m[🎙️ Ready for next command — Speak freely into your headset]\033[0m\n")
                 else:
                     # Currently awake (Active 3-minute dwell mode)
                     loop_state["last_interaction_time"] = time.time()
@@ -249,6 +252,7 @@ def continuous_conversation_loop():
 
                     if has_wake and not command:
                         voice_speaker.speak("Right beside you, sir.", prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
+                        print("\033[1;36m[🎙️ Ready for next command — Speak freely into your headset]\033[0m\n")
                         continue
 
                     turn_res = asyncio.run(handle_turn(actual_query, speaker_tier=tier))
@@ -256,6 +260,8 @@ def continuous_conversation_loop():
                     should_continue = turn_res.get("should_continue", True) if isinstance(turn_res, dict) else turn_res
                     if not should_continue:
                         loop_state["is_awake"] = False
+                    else:
+                        print("\033[1;36m[🎙️ Ready for next command — Speak freely into your headset]\033[0m\n")
 
             except Exception as loop_err:
                 status_bar.clear()

@@ -172,7 +172,7 @@ class AudioStreamWorker:
 
             # Update ambient noise baseline ONLY during non-speech quiet times!
             if ac_rms < self.ambient_baseline * 1.35:
-                self.ambient_baseline = 0.98 * self.ambient_baseline + 0.02 * ac_rms
+                self.ambient_baseline = min(180.0, 0.98 * self.ambient_baseline + 0.02 * ac_rms)
 
             with self.lock:
                 self.buffer.append((clean_bytes, ac_rms))
@@ -358,9 +358,9 @@ class NativeSpeechRecognizer:
                     continue
 
                 chunk, ac_rms = item
-                baseline = self.worker.ambient_baseline
+                baseline = min(self.worker.ambient_baseline, 180.0)
                 # Sensitive vocal threshold cleanly above room / headset acoustics
-                speech_threshold = max(baseline * 1.20, baseline + 65.0)
+                speech_threshold = min(max(baseline * 1.15, baseline + 50.0), 220.0)
 
                 # Dynamic VU Audio Meter: voice dynamically fills the bar
                 excess = max(0.0, ac_rms - baseline)
@@ -403,10 +403,13 @@ class NativeSpeechRecognizer:
                         if time.time() - start_time > max_wait_sec:
                             break
 
-                # Instant manual cutoff: if user taps ENTER in terminal while speaking, process instantly
+                # Instant manual cutoff: non-blocking stdin check (never hangs)
                 try:
                     if select.select([sys.stdin], [], [], 0)[0]:
-                        sys.stdin.readline()
+                        try:
+                            os.read(sys.stdin.fileno(), 1024)
+                        except Exception:
+                            pass
                         if is_speaking:
                             break
                 except Exception:

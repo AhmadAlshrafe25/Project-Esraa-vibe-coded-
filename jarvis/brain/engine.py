@@ -471,13 +471,24 @@ class BrainEngine:
             memory_service.save_message("ezra", quick_reply, [])
             return {"speech_text": quick_reply, "tool_calls": []}
 
+        # 1. ACTION-FIRST FAST PATH (<5ms latency, 100% Zero-Cloud, Zero-Quota)
+        # "If she can do it without AI that's great; if she needs AI let her use it."
+        # If the user is issuing a clear desktop, volume, media, app, or system directive,
+        # execute it locally and immediately!
+        direct_action = await self._try_direct_action(user_message)
+        if direct_action:
+            reply_speech = direct_action.get("speech_text", "")
+            memory_service.save_message("ezra", reply_speech, direct_action.get("tool_calls", []))
+            asyncio.create_task(memory_service.auto_learn_from_interaction(user_message, reply_speech))
+            return direct_action
+
         # Build context from learned facts
         facts = memory_service.get_all_facts()
         facts_str = "\n".join([f"- {k}: {v}" for k, v in facts.items()]) or "No specific custom facts recorded yet."
         prompt = get_system_prompt(learned_context=facts_str)
 
         output = None
-        # 1. Attempt Gemini (Free on Google AI Studio)
+        # 2. Attempt Gemini (Free on Google AI Studio)
         if self.gemini_key:
             try:
                 output = await self._call_gemini(user_message, prompt, speaker_tier=speaker_tier)
@@ -821,30 +832,44 @@ class BrainEngine:
             "tool_calls": tool_results
         }
 
-    async def _offline_smart_fallback(self, user_message: str) -> Dict[str, Any]:
+    async def _try_direct_action(self, user_message: str) -> Optional[Dict[str, Any]]:
+        """
+        Action-First Fast Path:
+        "If she can do it without AI that's great; if she needs AI let her use it."
+        Directly executes local desktop/system/media commands in <5ms without querying cloud AI.
+        Returns response dict if handled, or None if cognitive AI reasoning is needed.
+        """
+        msg = user_message.lower().strip()
+        # Pure information-seeking questions require generative AI reasoning
+        question_starters = ("what is ", "what are ", "who is ", "who was ", "why is ", "why are ", "why do ", "how does ", "explain ", "summarize ", "write me ")
+        if any(msg.startswith(qs) for qs in question_starters) and not any(k in msg for k in ("hogging", "memory", "ram", "status", "battery")):
+            return None
+
+        # Check if the universal semantic action planner resolves actions
+        return await self._parse_and_execute_semantic_actions(user_message)
+
+    async def _parse_and_execute_semantic_actions(self, user_message: str) -> Optional[Dict[str, Any]]:
         raw_msg = user_message.strip()
         msg = raw_msg.lower()
         has_ar = bool(re.search(r"[\u0600-\u06FF]", msg))
 
-        # =========================================================================
-        # UNIVERSAL SEMANTIC ACTION DECOMPOSER & PLANNER (100% Zero-Cloud Resilient)
-        # Parses complex, compound natural language requests (e.g. volume + song,
-        # app + prompt) regardless of phrasing, preambles, or missing keywords.
-        # =========================================================================
+        # Clean conversational preambles repeatedly
         clean_text = msg
-        clean_text = re.sub(
-            r'^(?:all\s+right|alright|okay|ok|hey|hi|hello)?\s*(?:ezra|israel|اسمعي\s+عزرا|يا\s*عزرا|عزرا)?\s*,?\s*'
-            r'(?:can\s+you|could\s+you|would\s+you|please|like|just|go\s+ahead\s+and|ممكن|بالله\s*عليكي|لو\s*سمحتي|بدي\s*منك|اعملي)?\s*',
-            '',
-            clean_text,
-            flags=re.IGNORECASE
-        ).strip()
-        clean_text = re.sub(
-            r'\s*(?:while\s+we\s+talk|while\s+i\s+talk|while\s+we\s+chat|in\s+the\s+background|for\s+me|please|right\s+now|لو\s*سمحتي|بالله\s*عليكي)\s*$',
-            '',
-            clean_text,
-            flags=re.IGNORECASE
-        ).strip()
+        while True:
+            prev = clean_text
+            clean_text = re.sub(r'^(?:all\s+right|alright|okay|ok|hey|hi|hello|yo)\s*,?\s*', '', clean_text)
+            clean_text = re.sub(r'^(?:ezra|israel|esra|asra|azra|يا\s*عزرا|اسمعي\s*عزرا|عزرا)\s*,?\s*', '', clean_text)
+            clean_text = re.sub(r'^(?:can\s+you\s+like|can\s+you|could\s+you|would\s+you|please|like|just|go\s+ahead\s+and|ممكن|لو\s*سمحتي|بالله\s*عليكي|اعملي|بدي\s*منك)\s*', '', clean_text)
+            clean_text = clean_text.strip()
+            if clean_text == prev:
+                break
+
+        # Clean conversational postambles
+        while True:
+            prev = clean_text
+            clean_text = re.sub(r'\s*(?:while\s+we\s+talk|while\s+i\s+talk|while\s+we\s+chat|in\s+the\s+background|for\s+me|please|right\s+now|لو\s*سمحتي|بالله\s*عليكي)$', '', clean_text).strip()
+            if clean_text == prev:
+                break
 
         # Split compound requests joined by "and", "then", "also", "plus", "while", "و", "ثم", "كمان"
         parts = [p.strip() for p in re.split(r'\s+(?:and\s+also|and\s+then|and|then|also|plus|&|و\s*كمان|ثم|و)\s+', clean_text) if p.strip()]
@@ -893,15 +918,16 @@ class BrainEngine:
                     detected_actions.append(("prompt_app", {"app_name": t_app, "text": t_txt, "press_enter": True}, f"Sent to {t_app}"))
                     continue
 
-            # 4. YouTube & Music Playback
+            # 4. YouTube & Media Playback
             # Matches specific songs, shanties, or any music intent (e.g. "leave her johnny", "interstellar", "play hans zimmer")
             is_music = (
-                any(w in p for w in ("leave her johnny", "shanty", "soundtrack", "song", "music", "youtube", "track", "أغنية", "اغنية", "شغل", "يوتيوب"))
-                or p.startswith("play ") or p.startswith("listen to ") or p.startswith("put on ")
+                any(w in p for w in ("leave her johnny", "shanty", "soundtrack", "song", "music", "youtube", "track", "أغنية", "اغنية", "شغل", "يوتيوب", "watch", "video", "trailer", "movie"))
+                or p.startswith("play ") or p.startswith("listen to ") or p.startswith("put on ") or p.startswith("watch ")
+                or ("everything great about" in p)
             )
             if is_music:
-                clean_s = re.sub(r'^(?:play|start|listen\s+to|put\s+on|stream|watch|open|شغل|حط)\s*(?:the\s+)?(?:song|music|video|track|أغنية|اغنية)?\s*', '', p).strip()
-                clean_s = re.sub(r'\s*(?:on\s+youtube|from\s+youtube|باليوتيوب|على\s+اليوتيوب)$', '', clean_s).strip()
+                clean_s = re.sub(r'^(?:can\s+you\s+)?(?:play|start|listen\s+to|put\s+on|stream|watch|open|search\s+(?:for\s+)?|شغل|حط|افتح)\s*(?:the\s+)?(?:song|music|video|track|movie|أغنية|اغنية)?\s*', '', p, flags=re.IGNORECASE).strip()
+                clean_s = re.sub(r'\s*(?:on\s+youtube|from\s+youtube|in\s+youtube|باليوتيوب|على\s+اليوتيوب)$', '', clean_s, flags=re.IGNORECASE).strip()
                 if clean_s:
                     detected_actions.append(("play_youtube", {"query": clean_s}, f"Starting \"{clean_s}\" on YouTube"))
                     continue
@@ -1003,6 +1029,18 @@ class BrainEngine:
                 "speech_text": reply_speech,
                 "tool_calls": executed_tools
             }
+
+        return None
+
+    async def _offline_smart_fallback(self, user_message: str) -> Dict[str, Any]:
+        raw_msg = user_message.strip()
+        msg = raw_msg.lower()
+        has_ar = bool(re.search(r"[\u0600-\u06FF]", msg))
+
+        # Check semantic actions first
+        direct_res = await self._parse_and_execute_semantic_actions(user_message)
+        if direct_res:
+            return direct_res
         m_antigrav = (
             re.search(
                 r"(?:write|type|send|give|paste|submit|run)\s+(?:this|a|an|the)?\s*(?:prompt\s+)?(?:to|in|into|for)\s+(?:anti-?gravity|antique gravity|gravity)\s*:?\s*(.+)$",
@@ -1562,11 +1600,12 @@ class BrainEngine:
             }
 
         # 16. YouTube / Media Playback
-        if "movie" in msg or "watch" in msg or "youtube" in msg:
-            clean_q = re.sub(r"(open|watch|play|movie|video|on youtube)", "", msg).strip() or "trending movies"
+        if any(w in msg for w in ("movie", "watch", "youtube", "play", "listen to", "put on", "stream")):
+            clean_q = re.sub(r"^(?:can\s+you\s+)?(?:open|watch|play|listen\s+to|stream|search\s+for)?\s*", "", msg, flags=re.IGNORECASE).strip()
+            clean_q = re.sub(r"\s*(?:on\s+youtube|from\s+youtube|in\s+youtube)$", "", clean_q, flags=re.IGNORECASE).strip() or "trending videos"
             res = BrowserManager.play_youtube_video_or_music(clean_q)
             return {
-                "speech_text": f"Right away, sir. Pulling up {clean_q} on YouTube.",
+                "speech_text": f"Starting \"{clean_q}\" on YouTube for you, sir.",
                 "tool_calls": [{"tool": "play_youtube", "result": res}]
             }
 
