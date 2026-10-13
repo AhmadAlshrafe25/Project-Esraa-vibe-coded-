@@ -16,12 +16,8 @@ import numpy as np
 from config.settings import CACHE_DIR, GEMINI_API_KEY
 
 NOISE_PHRASES = {
-    "thank you.", "thank you", "thanks.", "thanks", "you", "you.",
-    "thank you for watching.", "thank you for watching", "thanks for watching",
-    "bye.", "bye", "goodbye", "mm", "mm-hmm", "uh", "um", "ah",
-    "cough", "laughter", "applause", "music", "[music]", "(music)",
-    "huh", "huh.", "oh", "oh.", "so", "so.", "the",
-    "<noise>", "[noise]", "(noise)", "noise", "<silence>", "[silence]", "silence"
+    "<noise>", "[noise]", "(noise)", "noise", "<silence>", "[silence]", "silence",
+    "[music]", "(music)", "music", "[applause]", "applause"
 }
 
 def ensure_hardware_mic_volume():
@@ -303,12 +299,12 @@ class NativeSpeechRecognizer:
 
                 chunk, ac_rms = item
                 baseline = self.worker.ambient_baseline
-                # Speech threshold: adaptive delta above real room acoustics (sensitive & reliable)
-                speech_threshold = max(baseline * 1.35, baseline + 250.0)
+                # Speech threshold: sensitive delta above real room acoustics
+                speech_threshold = max(baseline * 1.18, baseline + 120.0)
 
                 # Dynamic audio level meter: scale dynamically so speaking always lights up the bar
                 excess = max(0.0, ac_rms - baseline)
-                scale_span = max(speech_threshold * 2.0, 1500.0)
+                scale_span = max(speech_threshold * 1.8, 1000.0)
                 level = min(10, max(0, int((excess / scale_span) * 10)))
                 meter_bar = "█" * level + "░" * (10 - level)
 
@@ -345,16 +341,7 @@ class NativeSpeechRecognizer:
                     if is_speaking:
                         recorded_frames.append(chunk)
                         silence_chunks += 1
-                        print(f"\r\033[1;33m[🎙 Pausing   |{meter_bar}|]\033[0m\033[K", end="", flush=True)
-                        if vosk_rec:
-                            if vosk_rec.AcceptWaveform(chunk):
-                                try:
-                                    res = json.loads(vosk_rec.Result())
-                                    txt = res.get("text", "").strip()
-                                    if txt:
-                                        recognized_segments.append(txt)
-                                except Exception:
-                                    pass
+                        print(f"\r\033[1;32m[🎙 Speaking  |{meter_bar}|]\033[0m\033[K", end="", flush=True)
                         if silence_chunks >= max_silence_chunks:
                             # Natural end of complete utterance
                             break
@@ -367,8 +354,8 @@ class NativeSpeechRecognizer:
         finally:
             print("\r\033[K", end="", flush=True)
 
-        # Noise Rejection Filter: If user spoke less than 3 chunks (<0.24s), discard as transient noise
-        if not recorded_frames or not is_speaking or speech_chunks_count < 3:
+        # Noise Rejection Filter: If user spoke less than 2 chunks (<0.16s), discard
+        if not recorded_frames or not is_speaking or speech_chunks_count < 2:
             return ""
 
         # Extract remaining transcription from Vosk
@@ -401,7 +388,7 @@ class NativeSpeechRecognizer:
         2. Google Cloud STT fallback if local stream was incomplete.
         """
         # Tier 1: Instant Streaming result (already decoded in real time while user spoke!)
-        if self.last_streaming_transcription and len(self.last_streaming_transcription.split()) >= 2:
+        if self.last_streaming_transcription and len(self.last_streaming_transcription.strip()) >= 1:
             transcription = self.last_streaming_transcription
             self.last_streaming_transcription = ""
             return transcription
