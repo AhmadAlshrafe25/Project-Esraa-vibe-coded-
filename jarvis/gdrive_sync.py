@@ -12,6 +12,8 @@ POSSIBLE_GDRIVE_ROOTS = [
     Path.home() / "GoogleDrive",
     Path.home() / "Google Drive",
     Path.home() / "gdrive",
+    Path.home() / "google-drive",
+    Path.home() / "Drive",
     Path.home() / ".local" / "share" / "google-drive"
 ]
 
@@ -28,8 +30,9 @@ class GDriveSync:
             p.mkdir(parents=True, exist_ok=True)
             return p
 
-        # 2. Check GVFS GNOME Online Accounts mounts
-        gvfs_dir = Path("/run/user/1000/gvfs")
+        # 2. Check GVFS GNOME Online Accounts mounts (dynamic UID for Arch/Debian/Fedora)
+        uid = os.getuid() if hasattr(os, "getuid") else 1000
+        gvfs_dir = Path(f"/run/user/{uid}/gvfs")
         if gvfs_dir.exists():
             for entry in gvfs_dir.iterdir():
                 if "google-drive" in entry.name.lower():
@@ -69,9 +72,12 @@ class GDriveSync:
 
         drive_dna = target_dir / "voice_genetic_code.json"
         local_dna = PROJECT_ROOT / "data" / "voice_genetic_code.json"
-        if drive_dna.exists() and not local_dna.exists():
-            shutil.copy2(drive_dna, local_dna)
-            print(f"\033[1;32m[☁️ Google Drive Sync]: Restored voice genetic code from Google Drive!\033[0m")
+        if drive_dna.exists():
+            local_dna_mtime = local_dna.stat().st_mtime if local_dna.exists() else 0
+            if not local_dna.exists() or drive_dna.stat().st_mtime > local_dna_mtime:
+                local_dna.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(drive_dna, local_dna)
+                print(f"\033[1;32m[☁️ Google Drive Sync]: Restored latest voice genetic code from Google Drive!\033[0m")
 
         if drive_json.exists():
             print(f"\033[1;32m[☁️ Google Drive Sync]: Found backup JSON in Google Drive: {drive_json}\033[0m")

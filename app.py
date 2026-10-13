@@ -307,6 +307,19 @@ def main():
                 print(f"• Commands:  /status, /snap, /brief, /say <text>, /run <cmd>\n")
                 continue
 
+            if user_choice.lower() in ("/sync", "sync", "/push"):
+                from jarvis.gdrive_sync import gdrive_sync
+                res = gdrive_sync.push_to_drive()
+                print(f"\n\033[1;32m[Google Drive Sync]:\033[0m Synced memory and biometrics to {res.get('target_dir')}\n")
+                continue
+
+            if user_choice.lower() in ("/pull", "pull"):
+                from jarvis.gdrive_sync import gdrive_sync
+                pulled = gdrive_sync.pull_from_drive()
+                status_str = "Restored latest memory and voice DNA from Google Drive!" if pulled else "Local memory is already up to date with Google Drive."
+                print(f"\n\033[1;32m[Google Drive Sync]:\033[0m {status_str}\n")
+                continue
+
             if not user_choice:
                 # Trigger continuous multi-turn hands-free conversation
                 continuous_conversation_loop()
