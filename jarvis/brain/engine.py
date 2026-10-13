@@ -19,8 +19,8 @@ from config.settings import PROJECT_ROOT
 SOUL_FILE = PROJECT_ROOT / "SOUL.md"
 
 ALL_TOOLS_LIST = (
-    "inspect_screen, click_screen_element, type_message, dictate_text, press_key, press_hotkey, "
-    "toggle_voice, set_voice_mode, get_weather, get_crypto_price, get_exchange_rate, search_wikipedia, get_network_info, "
+    "inspect_screen, click_screen_element, prompt_antigravity, focus_app, type_message, dictate_text, press_key, press_hotkey, "
+    "set_clipboard, get_clipboard, toggle_voice, set_voice_mode, get_weather, get_crypto_price, get_exchange_rate, search_wikipedia, get_network_info, "
     "get_tech_news, get_github_info, open_tab, close_tab, close_browser, search_web, search_portal, open_folder, play_youtube, launch_app, close_app, "
     "send_discord_message, take_screenshot, media_control, get_system_status, get_top_processes, set_volume, remember_fact, "
     "execute_shell_command, send_email, send_telegram, get_daily_briefing, send_desktop_notification, "
@@ -135,6 +135,31 @@ class BrainEngine:
             elif tool_name == "launch_app":
                 app_name = args.get("app_name") or args.get("app") or args.get("name") or args.get("application") or ""
                 res = AppManager.launch_app(app_name)
+            elif tool_name == "focus_app":
+                app_name = args.get("app_name") or args.get("app") or args.get("name") or ""
+                res = AppManager.focus_app(app_name)
+            elif tool_name == "prompt_antigravity":
+                prompt_txt = args.get("prompt") or args.get("text") or args.get("query") or user_context
+                res = AppManager.prompt_antigravity(prompt_txt)
+            elif tool_name == "type_message":
+                msg_txt = args.get("text") or args.get("message") or ""
+                press_enter = bool(args.get("press_enter", False) or args.get("enter", False))
+                res = AppManager.type_message(msg_txt, press_enter=press_enter)
+            elif tool_name == "dictate_text":
+                msg_txt = args.get("text") or args.get("message") or ""
+                press_enter = bool(args.get("press_enter", False))
+                res = AppManager.dictate_text(msg_txt, press_enter=press_enter)
+            elif tool_name == "press_key":
+                key_name = args.get("key") or args.get("name") or "enter"
+                res = AppManager.press_key(key_name)
+            elif tool_name == "press_hotkey":
+                keys_list = args.get("keys") or [args.get("key", "enter")]
+                res = AppManager.press_hotkey(keys_list)
+            elif tool_name == "set_clipboard":
+                clip_txt = args.get("text") or args.get("content") or ""
+                res = AppManager.copy_to_clipboard(clip_txt)
+            elif tool_name == "get_clipboard":
+                res = AppManager.read_clipboard()
             elif tool_name == "close_app":
                 app_name = args.get("app_name") or args.get("app") or args.get("name") or args.get("application") or ""
                 res = AppManager.close_app(app_name)
@@ -542,6 +567,99 @@ class BrainEngine:
         msg = user_message.lower().strip()
         has_ar = bool(re.search(r"[\u0600-\u06FF]", msg))
 
+        # 0. Antigravity Prompt Bridge (Direct Neural Voice Bridge to Antigravity IDE)
+        m_antigrav = (
+            re.search(
+                r"^(?:(?:hi|hey|yo)\s+)?(?:ezra\s*,?\s*)?(?:can you\s+)?(?:please\s+)?(?:write|type|send|give|paste|submit|run)\s+(?:this\s+)?(?:prompt\s+)?(?:to|in|into|for)\s+(?:anti-?gravity|antique gravity|gravity)\s*:?\s*(.+)$",
+                msg,
+                re.IGNORECASE
+            )
+            or re.search(
+                r"^(?:(?:hi|hey|yo)\s+)?(?:ezra\s*,?\s*)?(?:tell|ask|prompt)\s+(?:anti-?gravity|antique gravity|gravity)\s+(?:to\s+)?(?:write|make|do|fix|generate)?\s*:?\s*(.+)$",
+                msg,
+                re.IGNORECASE
+            )
+            or re.search(
+                r"^(?:يا\s*عزرا\s*)?(?:اكتبي|ابعتي|ارسلي|سجلي|قولي|اطرحي)\s*(?:هذا\s*)?(?:البرومبت\s*)?(?:لـ|إلى|الى|ل)\s*(?:antigravity|انتي\s*جرافيتي|انتيجرافيتي|جرافيتي)\s*:?\s*(.+)$",
+                msg,
+                re.IGNORECASE
+            )
+        )
+        if m_antigrav:
+            prompt_payload = m_antigrav.group(1).strip().strip("\"'").strip()
+            res = AppManager.prompt_antigravity(prompt_payload)
+            speech = f"تم إرسال الأمر إلى Antigravity يا سيدي: '{prompt_payload[:40]}'." if has_ar else f"Prompt dispatched to Antigravity, sir: '{prompt_payload[:45]}'."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "prompt_antigravity", "result": res}]
+            }
+
+        # Live Typing & Dictation into Active Window (with optional Enter)
+        if msg.startswith("type ") or msg.startswith("dictate ") or msg.startswith("write ") or msg.startswith("اكتبي ") or msg.startswith("اطبعي "):
+            hit_enter = any(w in msg for w in ("and press enter", "and hit enter", "مع انتر", "واضغطي انتر", "ثم اضغطي انتر"))
+            text_to_type = re.sub(r"^(?:type|dictate|write|اكتبي|اطبعي)\s*(?:this|out|for me|the following)?\s*:?\s*", "", user_message, flags=re.IGNORECASE).strip()
+            text_to_type = re.sub(r"\s+(?:and\s+(?:press|hit)\s+enter|مع\s+انتر|واضغطي\s+انتر|ثم\s+اضغطي\s+انتر)$", "", text_to_type, flags=re.IGNORECASE).strip()
+            if text_to_type:
+                res = AppManager.type_message(text_to_type, press_enter=hit_enter)
+                speech = f"كتبت النص{' وضغطت Enter' if hit_enter else ''} يا سيدي." if has_ar else f"Typed '{text_to_type[:40]}' for you{' and pressed Enter' if hit_enter else ''}, sir."
+                return {
+                    "speech_text": speech,
+                    "tool_calls": [{"tool": "type_message", "result": res}]
+                }
+
+        # Press Enter / Hit Enter (Standalone key press)
+        if any(w in msg for w in ("press enter", "hit enter", "send enter", "اضغطي انتر", "انتر")):
+            res = AppManager.press_key("enter")
+            speech = "تم ضغط مفتاح Enter يا سيدي." if has_ar else "Pressed Enter, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "press_key", "result": res}]
+            }
+
+        # Press Escape / Backspace / Tab
+        m_key = re.search(r"press\s+(escape|esc|backspace|tab|space|up|down|left|right)", msg)
+        if m_key:
+            k = m_key.group(1)
+            res = AppManager.press_key(k)
+            return {
+                "speech_text": f"Pressed {k}, sir.",
+                "tool_calls": [{"tool": "press_key", "result": res}]
+            }
+
+        # Focus application window
+        m_focus = re.search(r"(?:focus|switch to|bring up|ركزي على|روحي على)\s+(antigravity|discord|terminal|files|vlc|code|vscode|calculator|spotify|obs|chrome|firefox|brave)", msg)
+        if m_focus:
+            app_to_focus = m_focus.group(1)
+            res = AppManager.focus_app(app_to_focus)
+            speech = f"تم الانتقال إلى {app_to_focus} يا سيدي." if has_ar else f"Switched to {app_to_focus}, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "focus_app", "result": res}]
+            }
+
+        # Clipboard management
+        if any(w in msg for w in ("what is on my clipboard", "what's on my clipboard", "read clipboard", "get clipboard", "شو في بالحافظة", "محتوى الحافظة")):
+            res = AppManager.read_clipboard()
+            clip_val = res.get("clipboard", "")
+            if clip_val:
+                speech = f"حفظت في الحافظة: '{clip_val[:50]}'" if has_ar else f"Clipboard contains: '{clip_val[:50]}'."
+            else:
+                speech = "الحافظة فارغة يا سيدي." if has_ar else "Clipboard is currently empty, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "get_clipboard", "result": res}]
+            }
+
+        m_copy = re.search(r"(?:copy\s+(?:this\s+)?(?:to\s+clipboard)?|انسخي\s*(?:للحافظة)?)\s*:?\s*(.+)", msg)
+        if m_copy and not any(w in msg for w in ("file", "folder", "repo")):
+            text_to_copy = m_copy.group(1).strip()
+            res = AppManager.copy_to_clipboard(text_to_copy)
+            speech = f"تم نسخ النص إلى الحافظة يا سيدي." if has_ar else f"Copied to clipboard, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "set_clipboard", "result": res}]
+            }
+
         # 1. Executive Daily Briefing
         if "brief" in msg or "موجز" in msg or "morning" in msg:
             res = api_manager.get_daily_briefing()
@@ -923,14 +1041,6 @@ class BrainEngine:
                 "tool_calls": [{"tool": "set_voice_mode", "result": {"mode": "neural"}}]
             }
 
-        # 20. Live Typing & Dictation into Active Window
-        if msg.startswith("type ") or msg.startswith("dictate ") or msg.startswith("write "):
-            text_to_type = re.sub(r"^(type|dictate|write)\s*(this|out|for me|the following)?\s*:?\s*", "", user_message, flags=re.IGNORECASE).strip()
-            res = AppManager.type_message(text_to_type, press_enter=False)
-            return {
-                "speech_text": f"Typed '{text_to_type[:40]}' for you, sir.",
-                "tool_calls": [{"tool": "type_message", "result": res}]
-            }
 
         # 21. Live Weather
         if "weather" in msg or "temperature" in msg or "طقس" in msg or "حرارة" in msg:

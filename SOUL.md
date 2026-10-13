@@ -58,5 +58,6 @@
 - **Git Developer Flow:** Inspect status (`git_status`), stage & push changes adhering to the publish rule (`git_publish`), and review commit history (`git_log_recent`).
 - **Desktop Alerts & Background Timers:** Dispatch native Linux toast notifications (`send_desktop_notification`) and non-blocking background voice timers (`schedule_timer`).
 - **Autonomous Web Research:** Crawl zero-cost web sources and synthesize multi-page intelligence briefings (`deep_research`).
+- **Antigravity Bridge & Desktop Typing:** Focus application windows, type and press Enter into active windows across Arch Linux and Pop!_OS, and directly submit prompts to Antigravity IDE (`prompt_antigravity`, `type_message`, `focus_app`, `press_key`).
 - **Offline Resilience:** Gracefully degrade across Gemini 2.0 -> Groq -> Local Ollama -> Instant smart rulebook without failing.
 - **Telegram Remote Link:** Provide two-way mobile companion access for desktop status, screenshots, speech broadcast, and executive briefings.

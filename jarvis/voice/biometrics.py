@@ -23,7 +23,9 @@ SAFE_READ_TOOLS = {
     "search_web", "toggle_voice", "set_voice_mode", "get_daily_briefing", "git_status", "git_log_recent",
     "deep_research", "media_control", "close_tab", "close_browser", "git_pull", "sync_gdrive",
     "get_top_processes", "lock_screen", "add_note", "get_notes", "clear_notes",
-    "add_todo", "get_todos", "clear_todos", "get_recent_downloads", "search_portal", "open_folder"
+    "add_todo", "get_todos", "clear_todos", "get_recent_downloads", "search_portal", "open_folder",
+    "prompt_antigravity", "focus_app", "type_message", "dictate_text", "press_key", "press_hotkey",
+    "set_clipboard", "get_clipboard", "take_screenshot"
 }
 
 class VoiceBiometrics:
