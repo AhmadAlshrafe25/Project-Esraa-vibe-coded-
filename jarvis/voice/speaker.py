@@ -67,6 +67,7 @@ class SmoothSpeaker:
         try:
             pygame.mixer.music.load(str(audio_path))
             pygame.mixer.music.play()
+            time.sleep(0.04)  # Ensure SDL/pygame audio stream is actively buffered
         except Exception as e:
             print(f"[Playback Load Error] {e}")
             self.is_speaking = False
@@ -99,7 +100,8 @@ class SmoothSpeaker:
                 fd = None
 
         try:
-            while pygame.mixer.music.get_busy() and not self.is_interrupted:
+            # Short grace period to ensure get_busy reflects playing state
+            while (pygame.mixer.music.get_busy() or (print_thread and print_thread.is_alive())) and not self.is_interrupted:
                 # Check deliberate keyboard tap (Enter, Space, Esc, Q)
                 if fd is not None:
                     r, _, _ = select.select([sys.stdin], [], [], 0)
@@ -193,9 +195,9 @@ class SmoothSpeaker:
                 if cached_file.exists() and cached_file.stat().st_size > 500:
                     return self._play_file_with_interrupt(str(cached_file), text=clean_text, prefix=prefix, live_print=live_print)
 
-                # Generate with generous 4.0s timeout so synthesis completes naturally
+                # Generate with 12.0s timeout so synthesis completes naturally
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    audio_file = pool.submit(asyncio.run, self._generate_edge_speech(clean_text, v)).result(timeout=4.0)
+                    audio_file = pool.submit(asyncio.run, self._generate_edge_speech(clean_text, v)).result(timeout=12.0)
 
                 if audio_file and os.path.exists(audio_file):
                     return self._play_file_with_interrupt(audio_file, text=clean_text, prefix=prefix, live_print=live_print)

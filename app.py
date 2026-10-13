@@ -26,8 +26,8 @@ def print_banner():
 async def handle_turn(text: str) -> dict:
     """Processes a user turn: think → speak. Clean conversational flow, no animations."""
     clean = text.lower().strip()
-    if clean in ("stop", "pause", "exit", "quit", "goodbye", "bye", "cancel"):
-        farewell = "Understood. Pausing conversation loop, sir."
+    if clean in ("stop listening", "exit conversation", "quit conversation", "goodbye ezra", "bye ezra", "sleep ezra", "shut down", "go to sleep"):
+        farewell = "Understood. Pausing hands-free mode, sir. Press ENTER anytime to resume."
         voice_speaker.speak(farewell, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
         return {"should_continue": False, "was_interrupted": False}
 
@@ -63,7 +63,7 @@ def run_voice_enrollment():
     voice_speaker.speak("Please speak clearly for a few seconds so I can sequence and lock into your unique voice genetic code, sir.")
     print("\033[1;32m[🎙️ Ready — Speak now!]\033[0m")
     
-    audio_file = stt_engine.record_until_finished(max_wait_sec=12.0, silence_threshold_sec=2.0)
+    audio_file = stt_engine.record_until_finished(max_wait_sec=12.0, silence_threshold_sec=1.5)
     if not audio_file or not stt_engine.last_spk_vector:
         print("\033[1;31m[-] Calibration incomplete: No vocal profile captured. Please speak a little louder.\033[0m\n")
         return
@@ -82,21 +82,16 @@ def run_voice_enrollment():
 
 def continuous_conversation_loop():
     """Continuous conversation loop: dynamically listens until you finish speaking, replies, and immediately resumes listening!"""
-    print("\n\033[1;32m[⚡ CONTINUOUS CONVERSATION ACTIVE]\033[0m Speak freely! Tap ENTER or SPACE to cut Ezra off anytime.\n")
+    print("\n\033[1;32m[⚡ CONTINUOUS CONVERSATION ACTIVE]\033[0m Speak freely! Tap ENTER or SPACE to interrupt, say 'stop listening' or press Ctrl+C to pause.\n")
     
-    silence_count = 0
     while True:
         try:
-            audio_file = stt_engine.record_until_finished(max_wait_sec=12.0, silence_threshold_sec=1.1)
+            audio_file = stt_engine.record_until_finished(max_wait_sec=15.0, silence_threshold_sec=0.65)
             
             if not audio_file:
-                silence_count += 1
-                if silence_count >= 8:
-                    print("\r\033[1;33m[Paused due to inactivity. Press ENTER to talk again.]\033[0m\n")
-                    break
+                time.sleep(0.04)
                 continue
 
-            silence_count = 0
             transcription = stt_engine.transcribe_audio_file(audio_file)
             print("\r\033[K", end="", flush=True)
             
@@ -112,7 +107,7 @@ def continuous_conversation_loop():
             if isinstance(turn_res, dict) and turn_res.get("was_interrupted"):
                 time.sleep(0.05)
             else:
-                time.sleep(0.2)
+                time.sleep(0.12)
 
         except KeyboardInterrupt:
             print("\n\033[1;33m[Conversation paused. Press ENTER to resume.]\033[0m\n")

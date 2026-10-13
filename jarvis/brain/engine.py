@@ -159,6 +159,42 @@ class BrainEngine:
         if "how are you" in m_clean or "how r u" in m_clean or "how you doing" in m_clean or m_intent in ("how are you", "how are you doing", "how are things"):
             return "Operating at peak performance, sir. Ready for your instructions."
 
+        # British slang & casual greetings
+        if m_clean in ("wassup", "what's good", "whats good", "wagwan", "alright mate", "yo", "sup") or m_intent in ("wassup", "what's good", "whats good", "wagwan", "alright mate"):
+            return random.choice([
+                "All good on my end, mate. What's on your mind?",
+                "Everything running smooth, sir. How can I help?",
+                "Top shape, sir. What are we getting into?"
+            ])
+
+        # Arabic greetings
+        if any(w in m for w in ("مرحبا", "أهلا", "اهلا", "سلام", "السلام عليكم", "صباح الخير", "مساء الخير", "هلا")):
+            return random.choice([
+                "أهلاً بك يا سيدي، في خدمتك دائماً.",
+                "مرحباً بك، كيف يمكنني مساعدتك؟",
+                "أهلاً وسهلاً، أنا في الاستماع."
+            ])
+
+        # Arabic status / liveness
+        if any(w in m for w in ("سامعني", "أنت هنا", "انت هنا", "سامعتني", "موجودة", "وينك")):
+            return random.choice([
+                "نعم يا سيدي، أسمعك بكل وضوح.",
+                "معك دائماً، تفضل بأوامرك.",
+                "بجانبك يا سيدي، جاهزة لكل طلباتك."
+            ])
+
+        # Arabic acknowledgements
+        if any(w in m for w in ("شكرا", "شكراً", "تسلم", "يعطيك العافية", "مشكورة")):
+            return random.choice([
+                "العفو يا سيدي، في خدمتك دائماً.",
+                "بكل سرور يا سيدي.",
+                "على الرحب والسعة دائماً."
+            ])
+
+        # Arabic condition
+        if any(w in m for w in ("كيفك", "كيف حالك", "شو اخبارك", "شلونك")):
+            return "بأفضل حال والحمد لله يا سيدي، جاهزة ومستعدة لكل أوامرك."
+
         return None
 
     async def think(self, user_message: str) -> Dict[str, Any]:
