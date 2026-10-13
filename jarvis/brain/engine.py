@@ -641,84 +641,179 @@ class BrainEngine:
         raise Exception("Ollama daemon did not return valid response.")
 
     async def _process_tool_calls_in_text(self, reply_text: str, user_context: str = "", speaker_tier: str = "verified") -> Dict[str, Any]:
-        pattern = r"```(?:tool_call|json)?\s*(\{.*?\})\s*```"
-        matches = re.findall(pattern, reply_text, re.DOTALL)
-        if not matches:
-            inline_matches = re.findall(r'(\{"tool"\s*:\s*"[^"]+"\s*,\s*"args"\s*:\s*\{.*?\}\})', reply_text, re.DOTALL)
-            if inline_matches:
-                matches = inline_matches
+        all_calls = []
+        seen = set()
+
+        def add_call(obj):
+            if isinstance(obj, dict) and "tool" in obj:
+                key = (obj.get("tool"), json.dumps(obj.get("args", {}), sort_keys=True))
+                if key not in seen:
+                    seen.add(key)
+                    all_calls.append(obj)
+
+        def find_json_objects(text: str):
+            results = []
+            i = 0
+            n = len(text)
+            while i < n:
+                if text[i] == '{':
+                    start = i
+                    depth = 0
+                    in_string = False
+                    escape = False
+                    for j in range(start, n):
+                        char = text[j]
+                        if in_string:
+                            if escape:
+                                escape = False
+                            elif char == '\\':
+                                escape = True
+                            elif char == '"':
+                                in_string = False
+                        else:
+                            if char == '"':
+                                in_string = True
+                            elif char == '{':
+                                depth += 1
+                            elif char == '}':
+                                depth -= 1
+                                if depth == 0:
+                                    candidate = text[start:j+1]
+                                    try:
+                                        obj = json.loads(candidate)
+                                        if isinstance(obj, dict) and 'tool' in obj:
+                                            results.append(obj)
+                                            i = j
+                                    except Exception:
+                                        pass
+                                    break
+                i += 1
+            return results
+
+        # 1. Parse markdown code blocks (```tool_call, ```json, or generic ```)
+        code_blocks = re.findall(r'```(?:tool_call|json)?\s*([\s\S]*?)\s*```', reply_text)
+        for block in code_blocks:
+            b_str = block.strip()
+            try:
+                parsed = json.loads(b_str)
+                if isinstance(parsed, dict):
+                    add_call(parsed)
+                    continue
+                elif isinstance(parsed, list):
+                    for item in parsed:
+                        add_call(item)
+                    continue
+            except Exception:
+                pass
+
+            for obj in find_json_objects(b_str):
+                add_call(obj)
+
+        # 2. Parse inline tool JSON objects anywhere in text
+        for obj in find_json_objects(reply_text):
+            add_call(obj)
 
         tool_results = []
-        for match in matches:
+        for call_data in all_calls:
             try:
-                call_data = json.loads(match.strip())
-                if "tool" in call_data:
-                    res = await self.execute_tool(call_data["tool"], call_data.get("args", {}), user_context=user_context, speaker_tier=speaker_tier)
-                    tool_results.append({"tool": call_data["tool"], "result": json.loads(res)})
+                res = await self.execute_tool(call_data["tool"], call_data.get("args", {}), user_context=user_context, speaker_tier=speaker_tier)
+                tool_results.append({"tool": call_data["tool"], "result": json.loads(res)})
             except Exception as e:
-                tool_results.append({"error": str(e)})
+                tool_results.append({"tool": call_data.get("tool", "unknown"), "error": str(e)})
 
-        clean_text = re.sub(r"```(?:tool_call|json)?\s*\{.*?\}\s*```", "", reply_text, flags=re.DOTALL)
-        clean_text = re.sub(r'\{"tool"\s*:\s*"[^"]+"\s*,\s*"args"\s*:\s*\{.*?\}\}', "", clean_text, flags=re.DOTALL)
+        # Clean raw JSON and code blocks from speech text
+        clean_text = re.sub(r'```(?:tool_call|json)?[\s\S]*?```', '', reply_text)
+        while True:
+            m = re.search(r'\{\s*"tool"\s*:', clean_text)
+            if not m:
+                break
+            start = m.start()
+            depth = 0
+            end = -1
+            for i in range(start, len(clean_text)):
+                if clean_text[i] == '{':
+                    depth += 1
+                elif clean_text[i] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+            if end != -1:
+                clean_text = clean_text[:start] + clean_text[end:]
+            else:
+                break
         clean_text = clean_text.strip()
-        tool_speech = None
-        if tool_results:
-            first_tool = tool_results[0].get("tool", "")
-            first_res = tool_results[0].get("result", {})
-            if isinstance(first_res, dict):
-                if first_tool == "get_system_status":
-                    tool_speech = f"Systems nominal, sir. CPU at {first_res.get('cpu_percent', '--')}, RAM at {first_res.get('ram_used_gb', '--')}, battery at {first_res.get('battery', 'OK')}."
-                elif first_tool == "get_crypto_price" and "data" in first_res:
-                    prices_str = ", ".join([f"{k.capitalize()} is at {v.get('price', '')}" for k, v in first_res["data"].items()])
-                    tool_speech = f"Live market figures: {prices_str}."
-                elif first_tool == "get_network_info" and "network" in first_res:
-                    net = first_res.get("network", {})
-                    tool_speech = f"Public IP is {net.get('public_ip', '--')}, Wi-Fi is {net.get('wifi_ssid', '--')}, latency {net.get('ping_latency', '--')}."
-                elif first_tool == "get_tech_news" and "articles" in first_res:
-                    titles = "; ".join([a.get('title', '') for a in first_res["articles"][:3]])
-                    tool_speech = f"Top headlines right now: {titles}."
-                elif first_tool == "get_github_info":
-                    if "recent_repos" in first_res:
-                        repos = ", ".join(first_res["recent_repos"][:4])
-                        tool_speech = f"User {first_res.get('username')} has {first_res.get('public_repos_count')} repos, including {repos}."
-                    elif "description" in first_res:
-                        tool_speech = f"Repo {first_res.get('repo_name')} ({first_res.get('stars')} stars): {first_res.get('description')}."
-                elif first_tool == "git_status":
-                    clean_state = "working tree clean" if first_res.get("is_clean") else f"{first_res.get('modified_files_count')} uncommitted files"
-                    tool_speech = f"On branch {first_res.get('branch', 'main')}: {clean_state}."
-                elif first_tool == "git_log_recent":
-                    tool_speech = f"Recent commits: {first_res.get('summary', '')}."
-                elif first_tool == "execute_shell_command" and "output" in first_res:
-                    out = first_res.get("output", "").strip()[:100]
-                    tool_speech = f"Command output: {out}" if out else "Command executed successfully."
-                elif first_tool in ("prompt_antigravity", "prompt_app") and "message" in first_res and not clean_text:
-                    tool_speech = first_res["message"]
-                elif "summary" in first_res:
-                    tool_speech = first_res["summary"]
-                elif "extract" in first_res:
-                    tool_speech = first_res["extract"]
-                elif "message" in first_res and not clean_text:
-                    tool_speech = first_res["message"]
 
+        tool_speech_items = []
+        for tr in tool_results:
+            t_name = tr.get("tool", "")
+            t_res = tr.get("result", {})
+            if isinstance(t_res, dict):
+                if t_name == "get_system_status":
+                    tool_speech_items.append(f"Systems nominal, sir. CPU at {t_res.get('cpu_percent', '--')}, RAM at {t_res.get('ram_used_gb', '--')}, battery at {t_res.get('battery', 'OK')}.")
+                elif t_name == "get_top_processes" and "summary" in t_res:
+                    tool_speech_items.append(f"Top processes are {t_res.get('summary')}.")
+                elif t_name == "get_crypto_price" and "data" in t_res:
+                    prices_str = ", ".join([f"{k.capitalize()} is at {v.get('price', '')}" for k, v in t_res["data"].items()])
+                    tool_speech_items.append(f"Live market figures: {prices_str}.")
+                elif t_name == "get_network_info" and "network" in t_res:
+                    net = t_res.get("network", {})
+                    tool_speech_items.append(f"Public IP is {net.get('public_ip', '--')}, Wi-Fi is {net.get('wifi_ssid', '--')}, latency {net.get('ping_latency', '--')}.")
+                elif t_name == "get_tech_news" and "articles" in t_res:
+                    titles = "; ".join([a.get('title', '') for a in t_res["articles"][:3]])
+                    tool_speech_items.append(f"Top headlines right now: {titles}.")
+                elif t_name == "get_github_info":
+                    if "recent_repos" in t_res:
+                        repos = ", ".join(t_res["recent_repos"][:4])
+                        tool_speech_items.append(f"User {t_res.get('username')} has {t_res.get('public_repos_count')} repos, including {repos}.")
+                    elif "description" in t_res:
+                        tool_speech_items.append(f"Repo {t_res.get('repo_name')} ({t_res.get('stars')} stars): {t_res.get('description')}.")
+                elif t_name == "git_status":
+                    clean_state = "working tree clean" if t_res.get("is_clean") else f"{t_res.get('modified_files_count')} uncommitted files"
+                    tool_speech_items.append(f"On branch {t_res.get('branch', 'main')}: {clean_state}.")
+                elif t_name == "git_log_recent":
+                    tool_speech_items.append(f"Recent commits: {t_res.get('summary', '')}.")
+                elif t_name == "execute_shell_command" and "output" in t_res:
+                    out = t_res.get("output", "").strip()[:100]
+                    tool_speech_items.append(f"Command output: {out}" if out else "Command executed successfully.")
+                elif t_name in ("prompt_antigravity", "prompt_app") and "message" in t_res and not clean_text:
+                    tool_speech_items.append(t_res["message"])
+                elif "summary" in t_res:
+                    tool_speech_items.append(t_res["summary"])
+                elif "extract" in t_res:
+                    tool_speech_items.append(t_res["extract"])
+                elif "message" in t_res and not clean_text:
+                    tool_speech_items.append(t_res["message"])
+
+        tool_speech = " ".join(tool_speech_items).strip() if tool_speech_items else None
         if tool_speech:
             if not clean_text:
                 clean_text = tool_speech
-            elif any(first_tool.startswith(prefix) for prefix in ["get_", "search_", "inspect_"]):
-                clean_text = f"{clean_text} {tool_speech}"
+            elif any(tr.get("tool", "").startswith(prefix) for tr in tool_results for prefix in ["get_", "search_", "inspect_"]):
+                clean_text = f"{clean_text} {tool_speech}".strip()
         elif not clean_text and tool_results:
-            clean_text = f"Directive for {tool_results[0].get('tool', 'command')} completed, sir."
+            tools_done = [tr.get("tool", "directive") for tr in tool_results if "error" not in tr]
+            if tools_done:
+                clean_text = f"Actions for {', '.join(tools_done)} completed, sir."
+            else:
+                clean_text = "Directives completed, sir."
 
         # SPEECH GATE PROTOCOL:
-        # Prevent claiming an action succeeded if the tool failed or threw an error.
-        if tool_results:
-            first_tool = tool_results[0].get("tool", "")
-            first_res = tool_results[0].get("result", {})
-            first_err = tool_results[0].get("error", "")
-            
-            is_error = bool(first_err) or (isinstance(first_res, dict) and first_res.get("status") == "error")
-            if is_error:
-                err_detail = first_err or (first_res.get("message") if isinstance(first_res, dict) else "execution failed")
-                clean_text = f"Action for {first_tool} could not be completed, sir. Reason: {err_detail}."
+        # Prevent claiming an action succeeded if any tool failed or threw an error.
+        errors = []
+        for tr in tool_results:
+            t_name = tr.get("tool", "action")
+            t_err = tr.get("error", "")
+            t_res = tr.get("result", {})
+            if t_err:
+                errors.append(f"{t_name}: {t_err}")
+            elif isinstance(t_res, dict) and t_res.get("status") == "error":
+                errors.append(f"{t_name}: {t_res.get('message', 'execution failed')}")
+
+        if errors and not clean_text:
+            clean_text = f"Could not complete all directives, sir. Reason: {'; '.join(errors)}."
+        elif errors and clean_text:
+            clean_text = f"{clean_text} (Note: {'; '.join(errors)})"
 
         return {
             "speech_text": clean_text,
@@ -850,11 +945,14 @@ class BrainEngine:
                 continue
 
             # 9. System Status & Resources
-            if any(w in p for w in ("system status", "status", "system health", "diagnostics", "ram usage", "battery", "cpu", "فحص النظام")):
-                detected_actions.append(("get_system_status", {}, "Checked system vitals"))
-                continue
-            if any(w in p for w in ("top process", "top processes", "hogging memory", "eating ram", "what is using ram", "العمليات")):
+            if (
+                any(w in p for w in ("top process", "top processes", "hogging", "ماخذ رام", "العمليات", "resource hog", "memory hog", "cpu hog"))
+                or bool(re.search(r'(?:hogging|eating|using|taking\s+up|consuming)\s+(?:the\s+|my\s+)?(?:ram|memory|cpu|resources)', p))
+            ):
                 detected_actions.append(("get_top_processes", {"limit": 3}, "Checked top processes"))
+                continue
+            if any(w in p for w in ("system status", "status", "system health", "diagnostics", "ram usage", "battery", "cpu", "memory", "ram", "فحص النظام")):
+                detected_actions.append(("get_system_status", {}, "Checked system vitals"))
                 continue
 
             # 10. Screenshot
@@ -886,13 +984,18 @@ class BrainEngine:
                     res_raw = await self.execute_tool(tool_name, args, user_context=user_message)
                     res_obj = json.loads(res_raw)
                     executed_tools.append({"tool": tool_name, "result": res_obj})
-                    speech_summaries.append(desc)
+                    if isinstance(res_obj, dict) and tool_name == "get_top_processes" and res_obj.get("summary"):
+                        speech_summaries.append(f"Top processes are {res_obj['summary']}")
+                    elif isinstance(res_obj, dict) and tool_name == "get_system_status" and res_obj.get("status") == "success":
+                        speech_summaries.append(f"CPU at {res_obj.get('cpu_percent', '--')}, RAM at {res_obj.get('ram_used_gb', '--')}, battery at {res_obj.get('battery', '--')}")
+                    else:
+                        speech_summaries.append(desc)
                 except Exception as e:
                     executed_tools.append({"tool": tool_name, "error": str(e)})
 
             if speech_summaries:
                 joined_desc = " and ".join(speech_summaries)
-                reply_speech = f"{joined_desc} for you, sir."
+                reply_speech = f"{joined_desc} for you, sir." if not has_ar else f"تم تنفيذ: {joined_desc} يا سيدي."
             else:
                 reply_speech = "All actions completed, sir."
 
