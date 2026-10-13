@@ -13,3 +13,4 @@ Pillow>=10.0.0
 edge-tts>=6.1.12
 vosk>=0.3.45
 numpy>=1.26.0
+evdev>=1.7.0

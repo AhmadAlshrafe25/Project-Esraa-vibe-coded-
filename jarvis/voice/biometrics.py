@@ -25,7 +25,9 @@ SAFE_READ_TOOLS = {
     "get_top_processes", "lock_screen", "add_note", "get_notes", "clear_notes",
     "add_todo", "get_todos", "clear_todos", "get_recent_downloads", "search_portal", "open_folder",
     "prompt_antigravity", "prompt_app", "focus_app", "launch_app", "close_app",
-    "type_message", "dictate_text", "press_key", "press_hotkey",
+    "type_message", "type_text", "dictate_text", "press_key", "press_hotkey",
+    "move_mouse", "move_mouse_relative", "point_at", "click_mouse", "double_click", "right_click", "drag_mouse",
+    "click_screen_element", "inspect_screen",
     "set_clipboard", "get_clipboard", "take_screenshot", "execute_shell_command"
 }
 

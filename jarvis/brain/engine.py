@@ -19,7 +19,8 @@ from config.settings import PROJECT_ROOT
 SOUL_FILE = PROJECT_ROOT / "SOUL.md"
 
 ALL_TOOLS_LIST = (
-    "inspect_screen, click_screen_element, prompt_antigravity, prompt_app, focus_app, type_message, dictate_text, press_key, press_hotkey, "
+    "inspect_screen, click_screen_element, point_at, move_mouse, click_mouse, double_click, right_click, drag_mouse, "
+    "prompt_antigravity, prompt_app, focus_app, type_message, type_text, dictate_text, press_key, press_hotkey, "
     "set_clipboard, get_clipboard, toggle_voice, set_voice_mode, get_weather, get_crypto_price, get_exchange_rate, search_wikipedia, get_network_info, "
     "get_tech_news, get_github_info, open_tab, close_tab, close_browser, search_web, search_portal, open_folder, play_youtube, launch_app, close_app, "
     "send_discord_message, take_screenshot, media_control, get_system_status, get_top_processes, set_volume, remember_fact, "
@@ -34,13 +35,38 @@ You have direct, real-time control over the user's Linux computer (Arch Linux / 
 Whenever the user commands or asks for an action, task, or information, you MUST immediately output one or more ```tool_call blocks.
 
 Supported Tools and Exact Arguments:
+- `type_text`: Types arbitrary text, words, code, or shell commands into any window or terminal, with optional automatic Enter.
+  Args: {{"text": "<text to type>", "press_enter": true|false, "app_name": "<optional app name, e.g. terminal>"}}
+  Example: {{"tool": "type_text", "args": {{"text": "brave", "press_enter": true, "app_name": "terminal"}}}}
+
+- `move_mouse`: Moves the mouse cursor to absolute screen coordinates (x, y).
+  Args: {{"x": 500, "y": 300}}
+  Example: {{"tool": "move_mouse", "args": {{"x": 680, "y": 380}}}}
+
+- `point_at`: Points the mouse cursor at screen coordinates (x, y) or visually finds and points at a described screen element.
+  Args: {{"x": 500, "y": 300}} or {{"target": "<visual element or description>"}}
+  Example: {{"tool": "point_at", "args": {{"target": "search bar"}}}}
+
+- `click_mouse`: Clicks mouse button ('left', 'right', 'middle', 'double') at current or specified position.
+  Args: {{"button": "left"|"right"|"middle", "clicks": 1|2, "x": <optional int>, "y": <optional int>}}
+  Example: {{"tool": "click_mouse", "args": {{"button": "left"}}}}
+
+- `double_click`: Double clicks left mouse button at current or specified coordinates.
+  Args: {{"x": <optional int>, "y": <optional int>}}
+
+- `right_click`: Right clicks (context menu) at current or specified coordinates.
+  Args: {{"x": <optional int>, "y": <optional int>}}
+
+- `drag_mouse`: Drags mouse cursor from current or starting coordinates to target coordinates.
+  Args: {{"to_x": <int>, "to_y": <int>, "from_x": <optional int>, "from_y": <optional int>}}
+
 - `prompt_antigravity`: Direct bridge to Antigravity IDE. Focuses the Antigravity window, types the prompt into the active chat prompt input, and presses Enter to run it.
   Args: {{"prompt": "<exact prompt text to submit to Antigravity>"}}
   Example: {{"tool": "prompt_antigravity", "args": {{"prompt": "write a python function to parse json files"}}}}
 
 - `prompt_app`: Universal bridge to ANY desktop application (Discord, Terminal, VS Code, Browser, Notes, etc.). Focuses the app, types the text, and presses Enter.
   Args: {{"app_name": "<discord|terminal|code|obsidian|...>", "text": "<text to type/send>", "press_enter": true}}
-  Example: {{"tool": "prompt_app", "args": {{"app_name": "discord", "text": "hey everyone, standup starts now", "press_enter": true}}}}
+  Example: {{"tool": "prompt_app", "args": {{"app_name": "terminal", "text": "brave", "press_enter": true}}}}
 
 - `execute_shell_command`: Runs ANY Linux bash shell command on the laptop and retrieves stdout/stderr.
   Args: {{"command": "<bash command>"}}
@@ -196,9 +222,40 @@ class BrainEngine:
                 res = {"status": "success", "message": vision_analysis, "screen_vision": vision_analysis}
             elif tool_name == "click_screen_element":
                 res = screen_vision.locate_and_click(args.get("description", ""))
-            elif tool_name == "type_message":
-                text = args.get("text", "") or args.get("message", "") or user_context
-                res = AppManager.type_message(text, args.get("press_enter", False))
+            elif tool_name in ("type_message", "type_text"):
+                msg_txt = args.get("text") or args.get("message") or args.get("command") or user_context
+                press_enter = bool(args.get("press_enter", False) or args.get("enter", False))
+                app_target = args.get("app_name") or args.get("app") or None
+                in_term = args.get("in_terminal")
+                res = AppManager.type_text(msg_txt, press_enter=press_enter, app_name=app_target, in_terminal=in_term)
+            elif tool_name == "move_mouse":
+                res = AppManager.move_mouse(int(args.get("x", 0)), int(args.get("y", 0)))
+            elif tool_name == "point_at":
+                x = args.get("x")
+                y = args.get("y")
+                tgt = args.get("target") or args.get("element") or args.get("description")
+                res = AppManager.point_at(x=int(x) if x is not None else None, y=int(y) if y is not None else None, target=tgt)
+            elif tool_name == "click_mouse":
+                x = args.get("x")
+                y = args.get("y")
+                btn = args.get("button", "left")
+                clicks = int(args.get("clicks", 1))
+                res = AppManager.click_mouse(x=int(x) if x is not None else None, y=int(y) if y is not None else None, button=btn, clicks=clicks)
+            elif tool_name == "double_click":
+                x = args.get("x")
+                y = args.get("y")
+                res = AppManager.double_click(x=int(x) if x is not None else None, y=int(y) if y is not None else None)
+            elif tool_name == "right_click":
+                x = args.get("x")
+                y = args.get("y")
+                res = AppManager.right_click(x=int(x) if x is not None else None, y=int(y) if y is not None else None)
+            elif tool_name == "drag_mouse":
+                to_x = int(args.get("to_x", 0))
+                to_y = int(args.get("to_y", 0))
+                from_x = args.get("from_x")
+                from_y = args.get("from_y")
+                btn = args.get("button", "left")
+                res = AppManager.drag_mouse(to_x, to_y, from_x=int(from_x) if from_x is not None else None, from_y=int(from_y) if from_y is not None else None, button=btn)
             elif tool_name == "dictate_text":
                 text = args.get("text", "") or args.get("message", "") or user_context
                 res = AppManager.dictate_text(text, args.get("press_enter", False))
@@ -245,7 +302,8 @@ class BrainEngine:
                 res = AppManager.launch_app(app_name)
             elif tool_name == "focus_app":
                 app_name = args.get("app_name") or args.get("app") or args.get("name") or ""
-                res = AppManager.focus_app(app_name)
+                pick_other = bool(args.get("pick_other", False) or "other" in app_name.lower())
+                res = AppManager.focus_app(app_name, pick_other=pick_other)
             elif tool_name == "prompt_antigravity":
                 prompt_txt = args.get("prompt") or args.get("text") or args.get("query") or user_context
                 res = AppManager.prompt_antigravity(prompt_txt)
@@ -254,20 +312,6 @@ class BrainEngine:
                 prompt_txt = args.get("prompt") or args.get("text") or args.get("query") or user_context
                 press_enter = bool(args.get("press_enter", True))
                 res = AppManager.prompt_app(app_target, prompt_txt, press_enter=press_enter)
-            elif tool_name == "type_message":
-                msg_txt = args.get("text") or args.get("message") or ""
-                press_enter = bool(args.get("press_enter", False) or args.get("enter", False))
-                res = AppManager.type_message(msg_txt, press_enter=press_enter)
-            elif tool_name == "dictate_text":
-                msg_txt = args.get("text") or args.get("message") or ""
-                press_enter = bool(args.get("press_enter", False))
-                res = AppManager.dictate_text(msg_txt, press_enter=press_enter)
-            elif tool_name == "press_key":
-                key_name = args.get("key") or args.get("name") or "enter"
-                res = AppManager.press_key(key_name)
-            elif tool_name == "press_hotkey":
-                keys_list = args.get("keys") or [args.get("key", "enter")]
-                res = AppManager.press_hotkey(keys_list)
             elif tool_name == "set_clipboard":
                 clip_txt = args.get("text") or args.get("content") or ""
                 res = AppManager.copy_to_clipboard(clip_txt)
@@ -791,7 +835,7 @@ class BrainEngine:
                 elif t_name == "execute_shell_command" and "output" in t_res:
                     out = t_res.get("output", "").strip()[:100]
                     tool_speech_items.append(f"Command output: {out}" if out else "Command executed successfully.")
-                elif t_name in ("prompt_antigravity", "prompt_app") and "message" in t_res and not clean_text:
+                elif t_name in ("prompt_antigravity", "prompt_app", "type_message", "type_text", "move_mouse", "point_at", "click_mouse", "double_click", "right_click", "drag_mouse", "focus_app") and "message" in t_res and not clean_text:
                     tool_speech_items.append(t_res["message"])
                 elif "summary" in t_res:
                     tool_speech_items.append(t_res["summary"])
@@ -875,8 +919,46 @@ class BrainEngine:
             if clean_text == prev:
                 break
 
-        # Split compound requests joined by "and", "then", "also", "plus", "while", "و", "ثم", "كمان"
-        parts = [p.strip() for p in re.split(r'\s+(?:and\s+also|and\s+then|and|then|also|plus|&|و\s*كمان|ثم|و)\s+', clean_text) if p.strip()]
+        # Smart compound request splitting
+        ACTION_VERBS = (
+            r'(?:open|launch|start|run|close|kill|exit|quit|focus|switch\s+to|go\s+to|bring\s+up|'
+            r'type|write|dictate|pipe|point|move\s+(?:the\s+)?(?:mouse|cursor)|click|double\s+click|right\s+click|drag|'
+            r'press\s+(?:key|enter|escape|esc|tab|backspace|space)|hit\s+enter|send\s+enter|'
+            r'take\s+screenshot|capture\s+screen|lock\s+screen|suspend|sleep|'
+            r'mute|unmute|lower\s+(?:the\s+)?(?:sound|volume)|turn\s+down|turn\s+up|set\s+(?:the\s+)?(?:sound|volume)|'
+            r'pause\s+music|resume\s+music|stop\s+music|next\s+(?:song|track)|skip\s+song|'
+            r'search|google|prompt|tell|ask|'
+            r'روحي\s+على|ركزي\s+على|افتح|شغل|اغلق|سكر|اكتبي|اطبعي|اشري|حرك|انقري|اضغطي|دبل\s+كليك|رايت\s+كليك|'
+            r'اسحب|اضغطي\s+انتر|صور|اقفل|اكتم|علي\s+الصوت|وطي\s+الصوت|ابحث)'
+        )
+
+        raw_splits = re.split(r'(?:[;,]|\s+(?:and\s+then|then|after\s+that|afterwards|ثم|بعدين|وبعدين|وكمان)\s+)', clean_text)
+        parts = []
+        for chunk in raw_splits:
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            sub_pattern = rf'\s+(?:and\s+(?:also\s+)?|also\s+|plus\s+|&\s+|و\s*كمان\s+|و\s*)(?={ACTION_VERBS}\b)'
+            sub_chunks = re.split(sub_pattern, chunk)
+            merged = []
+            i = 0
+            while i < len(sub_chunks):
+                current = sub_chunks[i].strip()
+                if not current:
+                    i += 1
+                    continue
+                if i + 1 < len(sub_chunks):
+                    nxt = sub_chunks[i+1].strip()
+                    is_type = any(current.startswith(w) for w in ('type', 'write', 'dictate', 'pipe', 'اكتبي', 'اطبعي')) or 'terminal' in current
+                    is_enter = any(e in nxt for e in ('hit enter', 'press enter', 'send enter', 'اضغطي انتر', 'انتر'))
+                    if is_type and is_enter:
+                        merged.append(f'{current} {nxt}')
+                        i += 2
+                        continue
+                merged.append(current)
+                i += 1
+            parts.extend(merged)
+
         if not parts:
             parts = [clean_text]
 
@@ -923,7 +1005,6 @@ class BrainEngine:
                     continue
 
             # 4. YouTube & Media Playback
-            # Matches specific songs, shanties, or any music intent (e.g. "leave her johnny", "interstellar", "play hans zimmer")
             is_music = (
                 any(w in p for w in ("leave her johnny", "shanty", "soundtrack", "song", "music", "youtube", "track", "أغنية", "اغنية", "شغل", "يوتيوب", "watch", "video", "trailer", "movie"))
                 or p.startswith("play ") or p.startswith("listen to ") or p.startswith("put on ") or p.startswith("watch ")
@@ -947,15 +1028,156 @@ class BrainEngine:
                 detected_actions.append(("media_control", {"action": "next"}, "Skipped track"))
                 continue
 
-            # 6. Launch Application
-            m_launch = re.search(r'^(?:open|launch|start|run|شغل|افتح)\s+(?:application|app|برنامج|تطبيق)?\s*([a-zA-Z0-9_\-\.\+]+)$', p)
+            # 6. Terminal & Window Switching / Focus
+            if any(w in p for w in ("other terminal", "another terminal", "الترمينال الثاني", "الترمينال التاني")):
+                detected_actions.append(("focus_app", {"app_name": "terminal", "pick_other": True}, "Switched to other terminal"))
+                continue
+
+            m_win_focus = re.search(r'^(?:go\s+to|switch\s+to|focus|bring\s+up|روحي\s+على|ركزي\s+على)\s+(?:the\s+|a\s+|my\s+)?([a-zA-Z0-9_\-\.\+]+)(?:\s+(?:terminal|window|app|application))?$', p)
+            if m_win_focus:
+                f_target = m_win_focus.group(1).strip()
+                if f_target not in ("the", "this", "my", "other", "another", "screen", "youtube", "weather"):
+                    if "terminal" in p:
+                        f_target = "terminal"
+                    detected_actions.append(("focus_app", {"app_name": f_target}, f"Focused {f_target}"))
+                    continue
+
+            # 7. Terminal Typing / Command Execution in Terminal:
+            p_norm = re.sub(r'\bpipe\b', 'type', p)
+            is_term_req = any(w in p_norm for w in ("terminal", "kitty", "konsole", "alacritty", "ترمينال", "الترمينال"))
+            wants_enter = any(w in p_norm for w in ("hit enter", "press enter", "with enter", "send enter", "and enter", "then enter", "انتر", "واضغطي انتر", "ثم اضغطي انتر", "مع انتر"))
+
+            # Pattern A: (type|write) <text> in (the|my)? terminal ...
+            m_t_term = re.search(r'(?:type|write|اكتبي|اطبعي)\s+(?:the\s+command\s+(?:to\s+)?)?(.+?)\s+(?:in|into|on|بالـ|بـ)\s*(?:the\s+|my\s+)?(?:kitty\s+|alacritty\s+)?terminal(?:\s+that\s+i(?:\'m|\s+am)\s+looking\s+at(?:\s+right\s+now)?)?(?:\s+(?:and\s+|with\s+|then\s+)?(?:hit|press|send)?\s*enter|\s+مع\s+انتر|\s+واضغطي\s+انتر|\s+ثم\s+اضغطي\s+انتر|\s+and)?$', p_norm)
+            if not m_t_term:
+                # Pattern B: (go to|open) ... terminal ... (and\s+)?(type|write) <text> ...
+                m_t_term = re.search(r'(?:go\s+to|open(?:\s+up)?|switch\s+to|روحي\s+على)\s+(?:the\s+|a\s+|my\s+)?(?:kitty\s+|alacritty\s+)?terminal.*?(?:type|write|اكتبي|اطبعي)\s+(?:the\s+command\s+(?:to\s+)?)?(.+?)(?:\s+(?:and\s+|with\s+|then\s+)?(?:hit|press|send)?\s*enter|\s+مع\s+انتر|\s+واضغطي\s+انتر|\s+ثم\s+اضغطي\s+انتر|\s+and)?$', p_norm)
+            if not m_t_term and is_term_req and any(k in p_norm for k in ("type ", "write ", "اكتبي ", "اطبعي ")):
+                # Pattern C: general typing with terminal mentioned anywhere
+                m_t_term = re.search(r'(?:type|write|اكتبي|اطبعي)\s+(?:the\s+command\s+(?:to\s+)?)?(.+?)(?:\s+(?:and\s+|with\s+|then\s+)?(?:hit|press|send)?\s*enter|\s+مع\s+انتر|\s+واضغطي\s+انتر|\s+ثم\s+اضغطي\s+انتر)?$', p_norm)
+
+            if m_t_term and is_term_req:
+                text_payload = m_t_term.group(1).strip()
+                text_payload = re.sub(r'(?:\s+(?:and\s+|with\s+|then\s+)?(?:hit|press|send)?\s*enter|\s+مع\s+انتر|\s+و?اضغطي\s+انتر|\s+ثم\s+اضغطي\s+انتر|\s+انتر)$', '', text_payload, flags=re.IGNORECASE).strip()
+                text_payload = re.sub(r'^(?:the\s+command\s+(?:to\s+)?)?(?:open|launch|start)\s+([a-zA-Z0-9_\-\.\+]+)$', r'\1', text_payload).strip()
+                text_payload = re.sub(r'\s+(?:in|into|on)\s+(?:the\s+|my\s+)?terminal.*$', '', text_payload).strip()
+                text_payload = re.sub(r'\s+(?:بالترمينال|في\s+الترمينال).*$', '', text_payload).strip()
+                text_payload = text_payload.strip("\"'").strip()
+                if text_payload:
+                    detected_actions.append(("focus_app", {"app_name": "terminal"}, "Focused terminal"))
+                    detected_actions.append(("type_text", {"text": text_payload, "press_enter": wants_enter, "in_terminal": True}, f"Typed '{text_payload}' in terminal{' and hit Enter' if wants_enter else ''}"))
+                    continue
+
+            # 8. General Window Live Typing (not necessarily terminal)
+            if p_norm.startswith("type ") or p_norm.startswith("write ") or p_norm.startswith("dictate ") or p_norm.startswith("اكتبي ") or p_norm.startswith("اطبعي "):
+                m_t_gen = re.search(r'^(?:type|write|dictate|اكتبي|اطبعي)\s+(?:the\s+command\s+(?:to\s+)?)?(.+?)(?:\s+(?:and\s+|with\s+|then\s+)?(?:hit|press|send)?\s*enter|\s+مع\s+انتر|\s+و?اضغطي\s+انتر|\s+ثم\s+اضغطي\s+انتر|\s+انتر)?$', p_norm)
+                if m_t_gen:
+                    t_gen = m_t_gen.group(1).strip()
+                    t_gen = re.sub(r'(?:\s+(?:and\s+|with\s+|then\s+)?(?:hit|press|send)?\s*enter|\s+مع\s+انتر|\s+و?اضغطي\s+انتر|\s+ثم\s+اضغطي\s+انتر|\s+انتر)$', '', t_gen, flags=re.IGNORECASE).strip()
+                    t_gen = re.sub(r'^(?:the\s+command\s+(?:to\s+)?)?(?:open|launch|start)\s+([a-zA-Z0-9_\-\.\+]+)$', r'\1', t_gen).strip()
+                    t_gen = t_gen.strip("\"'").strip()
+                    if t_gen:
+                        detected_actions.append(("type_text", {"text": t_gen, "press_enter": wants_enter}, f"Typed '{t_gen}'{' and pressed Enter' if wants_enter else ''}"))
+                        continue
+
+            # 9. Mouse Movement & Coordinates Pointing
+            m_mouse_xy = re.search(r'(?:point|move\s+(?:the\s+)?(?:mouse|cursor))\s+(?:at|to)?\s*(\d+)\s*[,x\s]\s*(\d+)', p)
+            if m_mouse_xy:
+                mx = int(m_mouse_xy.group(1))
+                my = int(m_mouse_xy.group(2))
+                detected_actions.append(("move_mouse", {"x": mx, "y": my}, f"Moved mouse to ({mx}, {my})"))
+                continue
+
+            # Relative Mouse Movement: "move mouse right 100", "move cursor down 50"
+            m_mouse_rel = re.search(r'(?:move\s+(?:the\s+)?(?:mouse|cursor))\s+(right|left|up|down|يمين|يسار|شمال|فوق|تحت)(?:\s+by)?\s*(\d+)?', p)
+            if m_mouse_rel:
+                m_dir = m_mouse_rel.group(1)
+                dist = int(m_mouse_rel.group(2) or 60)
+                dx, dy = 0, 0
+                if m_dir in ("right", "يمين"):
+                    dx = dist
+                elif m_dir in ("left", "يسار", "شمال"):
+                    dx = -dist
+                elif m_dir in ("down", "تحت"):
+                    dy = dist
+                elif m_dir in ("up", "فوق"):
+                    dy = -dist
+                detected_actions.append(("move_mouse_relative", {"dx": dx, "dy": dy}, f"Moved mouse {m_dir} by {dist}px"))
+                continue
+
+            # Visual Element Pointing: "point at the search bar", "point at the close button", "اشري على المتصفح"
+            m_point_tgt = re.search(r'^(?:point\s+(?:at|to)|اشري\s+على|اشري\s+ع)\s+(.+)$', p)
+            if m_point_tgt:
+                pt_desc = m_point_tgt.group(1).strip()
+                if pt_desc and not any(w in pt_desc for w in ("out", "this", "that")):
+                    detected_actions.append(("point_at", {"target": pt_desc}, f"Pointed mouse at '{pt_desc}'"))
+                    continue
+
+            # 10. Mouse Clicks & Double-Clicks & Right-Clicks
+            m_dclick = re.search(r'^(?:double\s+click|دبل\s+كليك)(?:\s+(?:there|here|اضغطي))?(?:\s+(?:at\s*)?(\d+)\s*[,x\s]\s*(\d+))?$', p)
+            if m_dclick:
+                dc_x = int(m_dclick.group(1)) if m_dclick.group(1) else None
+                dc_y = int(m_dclick.group(2)) if m_dclick.group(2) else None
+                detected_actions.append(("double_click", {"x": dc_x, "y": dc_y}, "Double clicked"))
+                continue
+
+            m_rclick = re.search(r'^(?:right\s+click|context\s+menu|رايت\s+كليك)(?:\s+(?:there|here))?(?:\s+(?:at\s*)?(\d+)\s*[,x\s]\s*(\d+))?$', p)
+            if m_rclick:
+                rc_x = int(m_rclick.group(1)) if m_rclick.group(1) else None
+                rc_y = int(m_rclick.group(2)) if m_rclick.group(2) else None
+                detected_actions.append(("right_click", {"x": rc_x, "y": rc_y}, "Right clicked"))
+                continue
+
+            m_click = re.search(r'^(?:left\s+click|click|انقري|اضغطي\s+بالماوس)(?:\s+(?:there|here|هنا|هناك))?(?:\s+(?:at\s*)?(\d+)\s*[,x\s]\s*(\d+))?$', p)
+            if m_click:
+                c_x = int(m_click.group(1)) if m_click.group(1) else None
+                c_y = int(m_click.group(2)) if m_click.group(2) else None
+                detected_actions.append(("click_mouse", {"x": c_x, "y": c_y, "button": "left"}, "Clicked mouse"))
+                continue
+
+            m_click_elem = re.search(r'^(?:click\s+(?:on|the)|اضغطي\s+على)\s+(.+)$', p)
+            if m_click_elem:
+                cl_desc = m_click_elem.group(1).strip()
+                if cl_desc and cl_desc not in ("there", "here", "it"):
+                    detected_actions.append(("click_screen_element", {"description": cl_desc}, f"Clicked '{cl_desc}'"))
+                    continue
+
+            # 11. Mouse Dragging
+            m_drag = re.search(r'drag(?:\s+(?:the\s+)?mouse)?(?:\s+from\s+(\d+)\s*[,x\s]\s*(\d+))?\s+to\s+(\d+)\s*[,x\s]\s*(\d+)', p)
+            if m_drag:
+                fx = int(m_drag.group(1)) if m_drag.group(1) else None
+                fy = int(m_drag.group(2)) if m_drag.group(2) else None
+                tx = int(m_drag.group(3))
+                ty = int(m_drag.group(4))
+                detected_actions.append(("drag_mouse", {"to_x": tx, "to_y": ty, "from_x": fx, "from_y": fy}, f"Dragged mouse to ({tx}, {ty})"))
+                continue
+
+            # 12. Standalone Key Presses
+            if p in ("press enter", "hit enter", "send enter", "اضغطي انتر", "انتر", "now press enter", "just hit enter"):
+                detected_actions.append(("press_key", {"key": "enter"}, "Pressed Enter"))
+                continue
+            if p in ("press escape", "press esc", "اضغطي escape", "اضغطي esc"):
+                detected_actions.append(("press_key", {"key": "esc"}, "Pressed Escape"))
+                continue
+            if p in ("press tab", "اضغطي tab"):
+                detected_actions.append(("press_key", {"key": "tab"}, "Pressed Tab"))
+                continue
+            if p in ("press backspace", "اضغطي backspace"):
+                detected_actions.append(("press_key", {"key": "backspace"}, "Pressed Backspace"))
+                continue
+            if p in ("press space", "اضغطي مسافة"):
+                detected_actions.append(("press_key", {"key": "space"}, "Pressed Space"))
+                continue
+
+            # 13. Launch Application
+            m_launch = re.search(r'^(?:open(?:\s+up)?|launch|start|run|شغل|افتح)\s+(?:a\s+|an\s+|the\s+)?(?:application|app|برنامج|تطبيق)?\s*([a-zA-Z0-9_\-\.\+]+)(?:\s+(?:terminal|browser|editor|window|app|application))?$', p)
             if m_launch:
                 app_t = m_launch.group(1).strip()
                 if app_t not in ("the", "this", "tab", "browser", "folder", "downloads", "documents", "youtube"):
                     detected_actions.append(("launch_app", {"app_name": app_t}, f"Launching {app_t}"))
                     continue
 
-            # 7. Close Application
+            # 14. Close Application
             m_close = re.search(r'^(?:close|kill|exit|quit|terminate|سكر|اغلق)\s+(?:application|app|برنامج|تطبيق)?\s*([a-zA-Z0-9_\-\.\+]+)$', p)
             if m_close:
                 app_t = m_close.group(1).strip()
@@ -963,7 +1185,7 @@ class BrainEngine:
                     detected_actions.append(("close_app", {"app_name": app_t}, f"Closed {app_t}"))
                     continue
 
-            # 8. Browser Tabs
+            # 15. Browser Tabs
             if any(w in p for w in ("close tab", "close the tab", "سكر التاب", "اغلق التاب")):
                 detected_actions.append(("close_tab", {}, "Closed browser tab"))
                 continue
@@ -974,23 +1196,12 @@ class BrainEngine:
                 detected_actions.append(("open_tab", {"url": "https://google.com"}, "Opened new tab"))
                 continue
 
-            # 9. System Status & Resources
-            if (
-                any(w in p for w in ("top process", "top processes", "hogging", "ماخذ رام", "العمليات", "resource hog", "memory hog", "cpu hog"))
-                or bool(re.search(r'(?:hogging|eating|using|taking\s+up|consuming)\s+(?:the\s+|my\s+)?(?:ram|memory|cpu|resources)', p))
-            ):
-                detected_actions.append(("get_top_processes", {"limit": 3}, "Checked top processes"))
-                continue
-            if any(w in p for w in ("system status", "status", "system health", "diagnostics", "ram usage", "battery", "cpu", "memory", "ram", "فحص النظام")):
-                detected_actions.append(("get_system_status", {}, "Checked system vitals"))
-                continue
-
-            # 10. Screenshot
+            # 16. Screenshot
             if any(w in p for w in ("screenshot", "take a screenshot", "capture screen", "صور الشاشة", "لقطة شاشة")):
                 detected_actions.append(("take_screenshot", {}, "Captured screenshot"))
                 continue
 
-            # 11. Lock / Suspend
+            # 17. Lock / Suspend
             if any(w in p for w in ("lock screen", "lock pc", "lock computer", "قفل الشاشة")):
                 detected_actions.append(("lock_screen", {}, "Locked screen"))
                 continue
@@ -998,12 +1209,27 @@ class BrainEngine:
                 detected_actions.append(("execute_shell_command", {"command": "systemctl suspend"}, "Suspended computer"))
                 continue
 
-            # 12. Web Search
-            m_search = re.search(r'^(?:search|google|search\s+for|search\s+the\s+web\s+for|ابحث\s+عن)\s+(.+)$', p)
+            # 18. System Status & Resources
+            if (
+                any(w in p for w in ("top process", "top processes", "hogging", "ماخذ رام", "العمليات", "resource hog", "memory hog", "cpu hog"))
+                or bool(re.search(r'(?:hogging|eating|using|taking\s+up|consuming)\s+(?:the\s+|my\s+)?(?:ram|memory|cpu|resources)', p))
+            ):
+                detected_actions.append(("get_top_processes", {"limit": 3}, "Checked top processes"))
+                continue
+            if (
+                p in ("system status", "status", "check status", "system health", "diagnostics", "ram usage", "battery", "cpu", "memory", "ram", "فحص النظام", "حالة النظام")
+                or bool(re.search(r'^(?:get|check|show|tell\s+me|what\s+is|display|فحص|شوف|شيك|اعطيني)?\s*(?:the\s+)?(?:system\s+status|system\s+health|system\s+vitals|diagnostics|ram\s+usage|cpu\s+usage|battery\s+(?:level|status|percent)?|memory\s+usage|حالة\s+النظام)', p))
+            ):
+                detected_actions.append(("get_system_status", {}, "Checked system vitals"))
+                continue
+
+            # 19. Web Search
+            m_search = re.search(r'^(?:search\s+(?:the\s+web\s+)?for|google\s+for|search|google|ابحث\s+عن)\s+(.+)$', p)
             if m_search:
                 q_s = m_search.group(1).strip()
                 detected_actions.append(("search_web", {"query": q_s, "engine": "google"}, f"Searching Google for '{q_s}'"))
                 continue
+
 
         # If one or more semantic actions were detected, execute all of them!
         if detected_actions:
@@ -1148,8 +1374,9 @@ class BrainEngine:
                     "tool_calls": [{"tool": "type_message", "result": res}]
                 }
 
-        # Press Enter / Hit Enter (Standalone key press)
-        if any(w in msg for w in ("press enter", "hit enter", "send enter", "اضغطي انتر", "انتر")):
+        # Press Enter / Hit Enter (Standalone key press ONLY when not a typing command)
+        has_typing_intent = any(w in msg for w in ("type", "write", "dictate", "pipe", "اكتبي", "اطبعي", "terminal", "ترمينال"))
+        if not has_typing_intent and any(w in msg for w in ("press enter", "hit enter", "send enter", "اضغطي انتر", "انتر")):
             res = AppManager.press_key("enter")
             speech = "تم ضغط مفتاح Enter يا سيدي." if has_ar else "Pressed Enter, sir."
             return {

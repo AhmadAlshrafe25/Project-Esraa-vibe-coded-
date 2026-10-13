@@ -1,4 +1,6 @@
 import os
+import re
+import json
 import time
 import subprocess
 import shutil
@@ -7,7 +9,7 @@ import tempfile
 import sys
 import types
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from config.settings import CACHE_DIR
 
 # Ensure DISPLAY variable exists to prevent mouseinfo crash on headless/Wayland
@@ -25,6 +27,15 @@ try:
     import pyautogui
 except Exception:
     pyautogui = None
+
+try:
+    import evdev
+    from evdev import ecodes, UInput, AbsInfo
+except Exception:
+    evdev = None
+    ecodes = None
+    UInput = None
+    AbsInfo = None
 
 
 def set_clipboard(text: str) -> bool:
@@ -204,24 +215,388 @@ def find_antigravity_bin() -> Optional[Path]:
     return None
 
 
-def focus_window_by_pattern(pattern: str) -> bool:
-    """Activates and raises a window matching the pattern across KDE Plasma, GNOME, X11, Wayland."""
+def capture_desktop_screenshot(target_path: Optional[str] = None) -> str:
+    """Universal multi-distro desktop screenshot capturer.
+    Works natively across KDE Plasma 6/5 (Wayland & X11), wlroots Wayland, COSMIC, GNOME, and X11.
+    """
+    if target_path:
+        out_file = Path(target_path)
+    else:
+        out_file = CACHE_DIR / f"ezra_screen_{int(time.time() * 1000)}.png"
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    out_str = str(out_file)
+
+    # 1. KDE Plasma 6 & 5 Wayland & X11 (spectacle)
+    if shutil.which("spectacle"):
+        try:
+            res = subprocess.run(["spectacle", "-b", "-n", "-o", out_str], capture_output=True, timeout=3.5)
+            if res.returncode == 0 and os.path.exists(out_str) and os.path.getsize(out_str) > 0:
+                return out_str
+        except Exception:
+            pass
+
+    # 2. Wayland wlroots (Sway, Hyprland, Wayfire via grim)
+    if shutil.which("grim"):
+        try:
+            res = subprocess.run(["grim", out_str], capture_output=True, timeout=3.0)
+            if res.returncode == 0 and os.path.exists(out_str) and os.path.getsize(out_str) > 0:
+                return out_str
+        except Exception:
+            pass
+
+    # 3. Pop!_OS COSMIC Wayland native screenshot
+    if shutil.which("cosmic-screenshot"):
+        try:
+            res = subprocess.run(
+                ["cosmic-screenshot", "--interactive=false", "--notify=false", f"--save-dir={out_file.parent}"],
+                capture_output=True,
+                text=True,
+                timeout=3.5
+            )
+            out_p = res.stdout.strip()
+            if out_p and os.path.exists(out_p):
+                return out_p
+            shots = sorted(glob.glob(str(out_file.parent / "Screenshot_*.png")), key=os.path.getmtime)
+            if shots and (time.time() - os.path.getmtime(shots[-1])) < 5:
+                return shots[-1]
+        except Exception:
+            pass
+
+    # 4. GNOME Screenshot
+    if shutil.which("gnome-screenshot"):
+        try:
+            res = subprocess.run(["gnome-screenshot", "-f", out_str], capture_output=True, timeout=3.0)
+            if res.returncode == 0 and os.path.exists(out_str) and os.path.getsize(out_str) > 0:
+                return out_str
+        except Exception:
+            pass
+
+    # 5. ImageMagick import (X11)
+    if shutil.which("import"):
+        try:
+            res = subprocess.run(["import", "-window", "root", out_str], capture_output=True, timeout=3.0)
+            if res.returncode == 0 and os.path.exists(out_str) and os.path.getsize(out_str) > 0:
+                return out_str
+        except Exception:
+            pass
+
+    # 6. Scrot / Maim (X11)
+    for tool_cmd in [["scrot", out_str], ["maim", out_str]]:
+        if shutil.which(tool_cmd[0]):
+            try:
+                res = subprocess.run(tool_cmd, capture_output=True, timeout=3.0)
+                if res.returncode == 0 and os.path.exists(out_str) and os.path.getsize(out_str) > 0:
+                    return out_str
+            except Exception:
+                pass
+
+    # 7. PIL ImageGrab fallback
+    try:
+        from PIL import ImageGrab
+        img = ImageGrab.grab()
+        img.save(out_str)
+        if os.path.exists(out_str) and os.path.getsize(out_str) > 0:
+            return out_str
+    except Exception:
+        pass
+
+    # 8. PyAutoGUI screenshot fallback
+    if pyautogui:
+        try:
+            shot = pyautogui.screenshot()
+            shot.save(out_str)
+            if os.path.exists(out_str) and os.path.getsize(out_str) > 0:
+                return out_str
+        except Exception:
+            pass
+
+    raise RuntimeError("All desktop screenshot capture backends (spectacle, grim, cosmic-screenshot, gnome-screenshot, import, scrot, PIL) failed or are unavailable.")
+
+
+class MouseController:
+    """Universal Linux Mouse & Cursor Controller with native Wayland & X11 support.
+    Uses kernel UInput via evdev for hardware-level cursor positioning and clicks on Wayland,
+    with PyAutoGUI fallback on X11 / XWayland.
+    """
+    _instance = None
+    _uinput = None
+
+    def __init__(self, screen_w: int = 1366, screen_h: int = 768):
+        self.screen_w = screen_w
+        self.screen_h = screen_h
+        self._init_screen_size()
+        self._init_uinput()
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def _init_screen_size(self):
+        try:
+            if pyautogui:
+                sz = pyautogui.size()
+                if sz and sz.width > 0 and sz.height > 0:
+                    self.screen_w = sz.width
+                    self.screen_h = sz.height
+                    return
+        except Exception:
+            pass
+        if shutil.which("kscreen-doctor"):
+            try:
+                res = subprocess.run(["kscreen-doctor", "-o"], capture_output=True, text=True, timeout=1.0)
+                m = re.search(r'(\d+)x(\d+)(?:@|\s)', res.stdout)
+                if m:
+                    self.screen_w = int(m.group(1))
+                    self.screen_h = int(m.group(2))
+            except Exception:
+                pass
+
+    def _init_uinput(self):
+        if not evdev or not UInput or not AbsInfo:
+            return
+        if self._uinput is not None:
+            return
+        try:
+            cap = {
+                ecodes.EV_ABS: [
+                    (ecodes.ABS_X, AbsInfo(value=self.screen_w // 2, min=0, max=self.screen_w, fuzz=0, flat=0, resolution=0)),
+                    (ecodes.ABS_Y, AbsInfo(value=self.screen_h // 2, min=0, max=self.screen_h, fuzz=0, flat=0, resolution=0)),
+                ],
+                ecodes.EV_REL: [
+                    ecodes.REL_X,
+                    ecodes.REL_Y,
+                ],
+                ecodes.EV_KEY: [
+                    ecodes.BTN_LEFT,
+                    ecodes.BTN_RIGHT,
+                    ecodes.BTN_MIDDLE,
+                    ecodes.BTN_TOUCH,
+                ]
+            }
+            self._uinput = UInput(cap, name="Ezra-Virtual-Pointer")
+        except Exception:
+            self._uinput = None
+
+    def move_to(self, x: int, y: int) -> dict:
+        clamped_x = max(0, min(self.screen_w, int(x)))
+        clamped_y = max(0, min(self.screen_h, int(y)))
+
+        # 1. Native UInput absolute movement (Wayland & X11)
+        if self._uinput:
+            try:
+                self._uinput.write(ecodes.EV_ABS, ecodes.ABS_X, clamped_x)
+                self._uinput.write(ecodes.EV_ABS, ecodes.ABS_Y, clamped_y)
+                self._uinput.syn()
+                return {"status": "success", "message": f"Moved mouse to ({clamped_x}, {clamped_y}).", "x": clamped_x, "y": clamped_y}
+            except Exception:
+                pass
+
+        # 2. PyAutoGUI fallback
+        if pyautogui:
+            try:
+                pyautogui.moveTo(clamped_x, clamped_y)
+                return {"status": "success", "message": f"Moved mouse to ({clamped_x}, {clamped_y}).", "x": clamped_x, "y": clamped_y}
+            except Exception as e:
+                return {"status": "error", "message": f"Failed to move mouse: {e}"}
+
+        return {"status": "error", "message": "No mouse controller backend available."}
+
+    def move_relative(self, dx: int, dy: int) -> dict:
+        if self._uinput:
+            try:
+                self._uinput.write(ecodes.EV_REL, ecodes.REL_X, int(dx))
+                self._uinput.write(ecodes.EV_REL, ecodes.REL_Y, int(dy))
+                self._uinput.syn()
+                return {"status": "success", "message": f"Moved mouse by ({dx}, {dy})."}
+            except Exception:
+                pass
+        if pyautogui:
+            try:
+                pyautogui.moveRel(int(dx), int(dy))
+                return {"status": "success", "message": f"Moved mouse by ({dx}, {dy})."}
+            except Exception as e:
+                return {"status": "error", "message": f"Failed to move mouse relatively: {e}"}
+        return {"status": "error", "message": "No mouse controller backend available."}
+
+    def click(self, x: Optional[int] = None, y: Optional[int] = None, button: str = "left", clicks: int = 1) -> dict:
+        if x is not None and y is not None:
+            self.move_to(x, y)
+            time.sleep(0.03)
+
+        btn_clean = button.lower().strip()
+        btn_code = ecodes.BTN_LEFT if ecodes else None
+        if ecodes:
+            if btn_clean == "right":
+                btn_code = ecodes.BTN_RIGHT
+            elif btn_clean == "middle":
+                btn_code = ecodes.BTN_MIDDLE
+
+        if self._uinput and btn_code is not None:
+            try:
+                for i in range(clicks):
+                    self._uinput.write(ecodes.EV_KEY, btn_code, 1)
+                    self._uinput.syn()
+                    time.sleep(0.04)
+                    self._uinput.write(ecodes.EV_KEY, btn_code, 0)
+                    self._uinput.syn()
+                    if clicks > 1 and i < clicks - 1:
+                        time.sleep(0.08)
+                loc_str = f" at ({x}, {y})" if (x is not None and y is not None) else ""
+                c_str = f"{clicks}x " if clicks > 1 else ""
+                return {"status": "success", "message": f"{c_str}{btn_clean.capitalize()} clicked{loc_str}."}
+            except Exception:
+                pass
+
+        if pyautogui:
+            try:
+                pyautogui.click(x=x, y=y, button=btn_clean, clicks=clicks)
+                loc_str = f" at ({x}, {y})" if (x is not None and y is not None) else ""
+                c_str = f"{clicks}x " if clicks > 1 else ""
+                return {"status": "success", "message": f"{c_str}{btn_clean.capitalize()} clicked{loc_str}."}
+            except Exception as e:
+                return {"status": "error", "message": f"Click failed: {e}"}
+
+        return {"status": "error", "message": "No mouse backend available."}
+
+    def double_click(self, x: Optional[int] = None, y: Optional[int] = None) -> dict:
+        return self.click(x=x, y=y, button="left", clicks=2)
+
+    def right_click(self, x: Optional[int] = None, y: Optional[int] = None) -> dict:
+        return self.click(x=x, y=y, button="right", clicks=1)
+
+    def drag_to(self, to_x: int, to_y: int, from_x: Optional[int] = None, from_y: Optional[int] = None, button: str = "left", steps: int = 15, duration: float = 0.2) -> dict:
+        if from_x is not None and from_y is not None:
+            self.move_to(from_x, from_y)
+            time.sleep(0.04)
+
+        btn_clean = button.lower().strip()
+        btn_code = ecodes.BTN_LEFT if ecodes else None
+        if ecodes and btn_clean == "right":
+            btn_code = ecodes.BTN_RIGHT
+
+        if self._uinput and btn_code is not None:
+            try:
+                self._uinput.write(ecodes.EV_KEY, btn_code, 1)
+                self._uinput.syn()
+                time.sleep(0.04)
+
+                sx = from_x if from_x is not None else to_x
+                sy = from_y if from_y is not None else to_y
+                step_delay = duration / max(1, steps)
+                for s in range(1, steps + 1):
+                    cx = int(sx + (to_x - sx) * (s / steps))
+                    cy = int(sy + (to_y - sy) * (s / steps))
+                    self.move_to(cx, cy)
+                    time.sleep(step_delay)
+
+                self._uinput.write(ecodes.EV_KEY, btn_code, 0)
+                self._uinput.syn()
+                return {"status": "success", "message": f"Dragged mouse to ({to_x}, {to_y})."}
+            except Exception:
+                pass
+
+        if pyautogui:
+            try:
+                if from_x is not None and from_y is not None:
+                    pyautogui.moveTo(from_x, from_y)
+                pyautogui.dragTo(to_x, to_y, duration=duration, button=btn_clean)
+                return {"status": "success", "message": f"Dragged mouse to ({to_x}, {to_y})."}
+            except Exception as e:
+                return {"status": "error", "message": f"Drag failed: {e}"}
+
+        return {"status": "error", "message": "No mouse backend available."}
+
+mouse_controller = MouseController.get_instance()
+
+
+TERMINAL_CLASSES = [
+    "kitty", "alacritty", "konsole", "cosmic-term", "gnome-terminal", "foot",
+    "wezterm", "xterm", "xfce4-terminal", "tilix", "terminator", "urxvt", "rxvt", "st", "bash", "zsh"
+]
+BROWSER_CLASSES = [
+    "brave-browser", "brave", "google-chrome", "google-chrome-stable", "chromium",
+    "chromium-browser", "firefox", "microsoft-edge", "opera", "vivaldi", "epiphany"
+]
+EDITOR_CLASSES = [
+    "code", "vscode", "vscodium", "cursor", "kate", "gedit", "sublime_text", "atom", "xed"
+]
+
+
+def focus_window_by_pattern(pattern: str, pick_other: bool = False) -> bool:
+    """Activates and raises a window matching the pattern across KDE Plasma 6/5, GNOME, X11, Wayland.
+    Supports smart category expansion (terminal, browser, editor) and switching between multiple windows.
+    """
     p_lower = pattern.lower().strip()
     focused = False
 
-    # 1. KDE Plasma KWin Scripting (Wayland & X11 on Arch Linux)
+    targets = [p_lower]
+    if p_lower in ("terminal", "term", "console", "shell", "bash", "zsh", "ترمينال", "الترمينال"):
+        targets.extend(TERMINAL_CLASSES)
+    elif p_lower in ("browser", "web", "internet", "متصفح"):
+        targets.extend(BROWSER_CLASSES)
+    elif p_lower in ("code", "editor", "vscode", "محرر"):
+        targets.extend(EDITOR_CLASSES)
+
+    targets_json = json.dumps(targets)
+    pick_other_js = "true" if pick_other else "false"
+
+    # 1. KDE Plasma KWin Scripting (Wayland & X11 on Arch Linux / Fedora / Kubuntu)
     qdbus_cmd = "qdbus6" if shutil.which("qdbus6") else ("qdbus" if shutil.which("qdbus") else None)
     if qdbus_cmd:
         script = f"""
-        var windows = workspace.windowList();
-        for (var i = 0; i < windows.length; ++i) {{
-            var w = windows[i];
+        var targets = {targets_json};
+        var pickOther = {pick_other_js};
+        var wins = workspace.windowList ? workspace.windowList() : workspace.stackingOrder;
+        var matches = [];
+        var activeWin = workspace.activeWindow;
+
+        for (var i = 0; i < wins.length; ++i) {{
+            var w = wins[i];
             var title = (w.caption || '').toLowerCase();
             var cls = (w.resourceClass || '').toLowerCase();
-            if (title.indexOf('{p_lower}') !== -1 || cls.indexOf('{p_lower}') !== -1) {{
-                workspace.activeWindow = w;
-                break;
+            var resName = (w.resourceName || '').toLowerCase();
+            var dfn = (w.desktopFileName || '').toLowerCase();
+
+            var hit = false;
+            for (var t = 0; t < targets.length; ++t) {{
+                var tgt = targets[t];
+                if (cls === tgt || resName === tgt || title.indexOf(tgt) !== -1 || cls.indexOf(tgt) !== -1 || resName.indexOf(tgt) !== -1 || dfn.indexOf(tgt) !== -1) {{
+                    hit = true;
+                    break;
+                }}
             }}
+            if (hit) {{
+                matches.push(w);
+            }}
+        }}
+
+        var chosen = null;
+        if (matches.length > 0) {{
+            if (pickOther && matches.length > 1) {{
+                for (var m = 0; m < matches.length; ++m) {{
+                    if (matches[m] !== activeWin) {{
+                        chosen = matches[m];
+                        break;
+                    }}
+                }}
+            }}
+            if (!chosen) chosen = matches[0];
+
+            if (chosen.desktops && chosen.desktops.length > 0 && workspace.currentDesktop) {{
+                var onCurrent = false;
+                for (var d = 0; d < chosen.desktops.length; ++d) {{
+                    if (chosen.desktops[d] === workspace.currentDesktop) {{ onCurrent = true; break; }}
+                }}
+                if (!onCurrent && chosen.desktops[0]) {{
+                    workspace.currentDesktop = chosen.desktops[0];
+                }}
+            }}
+
+            chosen.minimized = false;
+            workspace.activeWindow = chosen;
+            if (workspace.raiseWindow) workspace.raiseWindow(chosen);
         }}
         """
         temp_name = None
@@ -261,21 +636,33 @@ def focus_window_by_pattern(pattern: str) -> bool:
 
     # 2. wmctrl (Standard on Pop!_OS / X11 / XWayland)
     if not focused and shutil.which("wmctrl"):
-        try:
-            res = subprocess.run(["wmctrl", "-a", p_lower], capture_output=True, timeout=1.0)
-            if res.returncode == 0:
-                focused = True
-        except Exception:
-            pass
+        for tgt in targets:
+            try:
+                res = subprocess.run(["wmctrl", "-x", "-a", tgt], capture_output=True, timeout=0.8)
+                if res.returncode == 0:
+                    focused = True
+                    break
+                res = subprocess.run(["wmctrl", "-a", tgt], capture_output=True, timeout=0.8)
+                if res.returncode == 0:
+                    focused = True
+                    break
+            except Exception:
+                pass
 
     # 3. xdotool (X11 / XWayland)
     if not focused and shutil.which("xdotool"):
-        try:
-            res = subprocess.run(["xdotool", "search", "--name", p_lower, "windowactivate"], capture_output=True, timeout=1.0)
-            if res.returncode == 0:
-                focused = True
-        except Exception:
-            pass
+        for tgt in targets:
+            try:
+                res = subprocess.run(["xdotool", "search", "--class", tgt, "windowactivate"], capture_output=True, timeout=0.8)
+                if res.returncode == 0:
+                    focused = True
+                    break
+                res = subprocess.run(["xdotool", "search", "--name", tgt, "windowactivate"], capture_output=True, timeout=0.8)
+                if res.returncode == 0:
+                    focused = True
+                    break
+            except Exception:
+                pass
 
     return focused
 
@@ -321,7 +708,17 @@ NATIVE_APPS = {
 
 
 class AppManager:
-    """Controls desktop applications, window typing, Antigravity bridge, media, and system actions."""
+    """Controls desktop applications, window typing, Antigravity bridge, media, mouse, and system actions."""
+    _last_focused_app: str = ""
+
+    @staticmethod
+    def is_terminal_target(name: str) -> bool:
+        n = (name or "").lower().strip()
+        return any(t in n for t in ("terminal", "term", "kitty", "konsole", "alacritty", "bash", "shell", "foot", "wezterm", "xterm", "ترمينال"))
+
+    @classmethod
+    def is_terminal_active(cls) -> bool:
+        return cls.is_terminal_target(cls._last_focused_app)
 
     @staticmethod
     def launch_app(app_name: str) -> dict:
@@ -404,15 +801,21 @@ class AppManager:
 
         return {"status": "error", "message": f"Application '{app_name}' not found on system."}
 
-    @staticmethod
-    def focus_app(app_name: str) -> dict:
+    @classmethod
+    def focus_app(cls, app_name: str, pick_other: bool = False) -> dict:
         """Brings an application window to the foreground across KDE Plasma and GNOME/Cosmic."""
         app_clean = app_name.lower().strip()
         is_antigravity = any(g in app_clean for g in ("antigravity", "anti-gravity", "antique gravity", "gravity"))
         target_pattern = "antigravity" if is_antigravity else app_clean
 
+        if "other" in app_clean or "another" in app_clean or "ثاني" in app_clean or "تاني" in app_clean:
+            pick_other = True
+            target_pattern = re.sub(r'\b(?:the|other|another|window|الـ|الثاني|التاني)\b', '', target_pattern).strip() or "terminal"
+
         # Attempt window focus
-        focused = focus_window_by_pattern(target_pattern)
+        focused = focus_window_by_pattern(target_pattern, pick_other=pick_other)
+        if focused:
+            cls._last_focused_app = target_pattern
 
         # For Antigravity, also trigger single-instance launcher to guarantee raise
         if is_antigravity:
@@ -426,6 +829,7 @@ class AppManager:
                         start_new_session=True
                     )
                     focused = True
+                    cls._last_focused_app = "antigravity"
                 except Exception:
                     pass
 
@@ -433,7 +837,10 @@ class AppManager:
             return {"status": "success", "message": f"Focused application '{app_name}'."}
 
         # If not focused yet, try launching it
-        return AppManager.launch_app(app_name)
+        launch_res = AppManager.launch_app(target_pattern)
+        if launch_res.get("status") == "success":
+            cls._last_focused_app = target_pattern
+        return launch_res
 
     @staticmethod
     def prompt_antigravity(prompt_text: str) -> dict:
@@ -480,21 +887,22 @@ class AppManager:
             "message": f"Successfully submitted prompt to Antigravity: '{preview}'."
         }
 
-    @staticmethod
-    def prompt_app(app_name: str, text: str, press_enter: bool = True) -> dict:
+    @classmethod
+    def prompt_app(cls, app_name: str, text: str, press_enter: bool = True) -> dict:
         """Universal Application Bridge: Focuses ANY application window,
         types/pastes the prompt or text, and presses Enter to submit.
         """
         app_clean = app_name.lower().strip()
         if any(g in app_clean for g in ("antigravity", "anti-gravity", "antique gravity", "gravity")):
-            return AppManager.prompt_antigravity(text)
+            return cls.prompt_antigravity(text)
 
         # 1. Bring application window to foreground
-        AppManager.focus_app(app_clean)
-        time.sleep(0.35)
+        cls.focus_app(app_clean)
+        time.sleep(0.25)
 
-        # 2. Type/paste text into application
-        res = AppManager.type_message(text, press_enter=press_enter, delay_sec=0.1)
+        # 2. Type/paste text into application with terminal detection
+        is_term = cls.is_terminal_target(app_clean)
+        res = cls.type_message(text, press_enter=press_enter, delay_sec=0.08, in_terminal=is_term)
         preview = text[:50] + ("..." if len(text) > 50 else "")
         return {
             "status": "success",
@@ -513,28 +921,70 @@ class AppManager:
         subprocess.run(["pkill", "-f", binary], capture_output=True)
         return {"status": "success", "message": f"Sent termination signal to {app_name}."}
 
-    @staticmethod
-    def type_message(text: str, press_enter: bool = False, delay_sec: float = 0.2) -> dict:
-        """Types or pastes text into the currently active window on your desktop.
-        Uses multi-distro clipboard paste (Ctrl+V) for instantaneous, unicode-safe typing,
-        with automatic fallback to key simulation.
+    @classmethod
+    def type_message(cls, text: str, press_enter: bool = False, delay_sec: float = 0.15, in_terminal: Optional[bool] = None, app_name: Optional[str] = None) -> dict:
+        """Types or pastes text into the active window or target application.
+        Fixes Linux terminal typing:
+        - In terminal: avoids Ctrl+V (which triggers readline quoted-insert ^M), uses direct keystroke typing (pyautogui.write)
+          for ASCII shell commands, or Ctrl+Shift+V for non-ASCII/unicode clipboard paste.
+        - In desktop GUI apps: uses Ctrl+V clipboard paste with direct keystroke fallback.
+        - Optionally presses Enter after typing.
         """
         try:
+            if app_name:
+                cls.focus_app(app_name)
+                time.sleep(0.2)
+
             time.sleep(delay_sec)
-            pasted = False
-            if set_clipboard(text):
-                try:
-                    time.sleep(0.05)
-                    pyautogui.hotkey('ctrl', 'v')
-                    pasted = True
-                except Exception:
-                    pass
 
-            if not pasted:
-                pyautogui.write(text, interval=0.005)
+            is_term = in_terminal if in_terminal is not None else cls.is_terminal_active()
+            if app_name and cls.is_terminal_target(app_name):
+                is_term = True
 
-            if press_enter:
-                time.sleep(0.1)
+            if is_term:
+                # Terminal mode: NEVER send Ctrl+V (prevents readline ^M)
+                is_ascii = all(ord(c) < 128 for c in text)
+                typed = False
+                if is_ascii and pyautogui:
+                    try:
+                        pyautogui.write(text, interval=0.003)
+                        typed = True
+                    except Exception:
+                        pass
+
+                if not typed:
+                    # Unicode or multiline terminal typing: use terminal paste Ctrl+Shift+V
+                    if set_clipboard(text) and pyautogui:
+                        try:
+                            time.sleep(0.04)
+                            pyautogui.hotkey('ctrl', 'shift', 'v')
+                            typed = True
+                        except Exception:
+                            pass
+                    if not typed and pyautogui:
+                        try:
+                            pyautogui.write(text, interval=0.003)
+                            typed = True
+                        except Exception:
+                            pass
+            else:
+                # Standard GUI window (Antigravity, browser, Discord, editor)
+                pasted = False
+                if set_clipboard(text) and pyautogui:
+                    try:
+                        time.sleep(0.04)
+                        pyautogui.hotkey('ctrl', 'v')
+                        pasted = True
+                    except Exception:
+                        pass
+                if not pasted and pyautogui:
+                    try:
+                        pyautogui.write(text, interval=0.003)
+                    except Exception:
+                        pass
+
+            if press_enter and pyautogui:
+                time.sleep(0.08)
                 pyautogui.press('enter')
 
             preview = text[:60] + ("..." if len(text) > 60 else "")
@@ -544,6 +994,13 @@ class AppManager:
             }
         except Exception as e:
             return {"status": "error", "message": f"Failed to type text: {e}"}
+
+    @classmethod
+    def type_text(cls, text: str, press_enter: bool = False, app_name: Optional[str] = None, in_terminal: Optional[bool] = None) -> dict:
+        """Universal typing tool: types arbitrary text, words, code, or shell commands
+        into any window or terminal, with optional automatic Enter.
+        """
+        return cls.type_message(text=text, press_enter=press_enter, in_terminal=in_terminal, app_name=app_name)
 
     @staticmethod
     def copy_to_clipboard(text: str) -> dict:
@@ -559,17 +1016,56 @@ class AppManager:
         val = get_clipboard()
         return {"status": "success", "clipboard": val, "message": f"Clipboard contents: '{val[:60]}'"}
 
-    @staticmethod
-    def dictate_text(text: str, press_enter: bool = False) -> dict:
+    @classmethod
+    def dictate_text(cls, text: str, press_enter: bool = False) -> dict:
         """Dedicated dictation tool: types exactly what the user dictates into their active window."""
-        return AppManager.type_message(text=text, press_enter=press_enter, delay_sec=0.2)
+        return cls.type_message(text=text, press_enter=press_enter, delay_sec=0.15)
+
+    @staticmethod
+    def move_mouse(x: int, y: int) -> dict:
+        """Moves mouse cursor to specified screen coordinates (x, y)."""
+        return mouse_controller.move_to(x, y)
+
+    @staticmethod
+    def move_mouse_relative(dx: int, dy: int) -> dict:
+        """Moves mouse cursor relatively by (dx, dy) pixels."""
+        return mouse_controller.move_relative(dx, dy)
+
+    @staticmethod
+    def click_mouse(x: Optional[int] = None, y: Optional[int] = None, button: str = "left", clicks: int = 1) -> dict:
+        """Clicks the mouse button ('left', 'right', 'middle') at current or specified position."""
+        return mouse_controller.click(x=x, y=y, button=button, clicks=clicks)
+
+    @staticmethod
+    def double_click(x: Optional[int] = None, y: Optional[int] = None) -> dict:
+        """Double-clicks left mouse button at current or specified position."""
+        return mouse_controller.double_click(x=x, y=y)
+
+    @staticmethod
+    def right_click(x: Optional[int] = None, y: Optional[int] = None) -> dict:
+        """Right-clicks mouse (context menu) at current or specified position."""
+        return mouse_controller.right_click(x=x, y=y)
+
+    @staticmethod
+    def drag_mouse(to_x: int, to_y: int, from_x: Optional[int] = None, from_y: Optional[int] = None, button: str = "left") -> dict:
+        """Drags mouse to specified coordinates."""
+        return mouse_controller.drag_to(to_x=to_x, to_y=to_y, from_x=from_x, from_y=from_y, button=button)
+
+    @staticmethod
+    def point_at(x: Optional[int] = None, y: Optional[int] = None, target: Optional[str] = None) -> dict:
+        """Points the mouse cursor at coordinates (x, y) or visually locates and points at target."""
+        if x is not None and y is not None:
+            return mouse_controller.move_to(x, y)
+        if target:
+            from jarvis.actions.vision import screen_vision
+            return screen_vision.locate_and_point(target)
+        return {"status": "error", "message": "Must provide either coordinates (x, y) or target description to point at."}
 
     @staticmethod
     def press_key(key: str) -> dict:
         """Presses a single key (e.g. 'enter', 'tab', 'esc', 'backspace', 'down', 'space')."""
         try:
             clean_k = key.lower().strip()
-            # Map aliases
             alias_map = {
                 "return": "enter",
                 "escape": "esc",
@@ -591,22 +1087,21 @@ class AppManager:
         except Exception as e:
             return {"status": "error", "message": f"Failed to press shortcut: {e}"}
 
-    @staticmethod
-    def send_discord_message(message: str) -> dict:
+    @classmethod
+    def send_discord_message(cls, message: str) -> dict:
         """Launches Discord (if not already open), waits for focus, and types the message into active chat."""
-        AppManager.focus_app("discord")
+        cls.focus_app("discord")
         time.sleep(1.8)
-        return AppManager.type_message(message, press_enter=True)
+        return cls.type_message(message, press_enter=True)
 
     @staticmethod
     def take_screenshot() -> dict:
-        """Takes a full screen screenshot and saves it to cache."""
+        """Takes a full screen screenshot and saves it to cache across all Linux desktop environments."""
         try:
-            filename = f"screenshot_{int(time.time())}.png"
+            filename = f"screenshot_{int(time.time() * 1000)}.png"
             path = CACHE_DIR / filename
-            img = pyautogui.screenshot()
-            img.save(str(path))
-            return {"status": "success", "message": f"Screenshot saved to {path}.", "path": str(path)}
+            saved_path = capture_desktop_screenshot(str(path))
+            return {"status": "success", "message": f"Screenshot saved to {saved_path}.", "path": str(saved_path)}
         except Exception as e:
             return {"status": "error", "message": f"Screenshot failed: {e}"}
 
