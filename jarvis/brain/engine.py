@@ -28,6 +28,125 @@ ALL_TOOLS_LIST = (
     "add_note, get_notes, clear_notes, add_todo, get_todos, clear_todos, get_recent_downloads, deep_research"
 )
 
+TOOLS_SPECIFICATION = f"""
+### REAL-TIME SYSTEM & DESKTOP TOOLS SPECIFICATION:
+You have direct, real-time control over the user's Linux computer (Arch Linux / Pop!_OS).
+Whenever the user commands or asks for an action, task, or information, you MUST immediately output one or more ```tool_call blocks.
+
+Supported Tools and Exact Arguments:
+- `prompt_antigravity`: Direct bridge to Antigravity IDE. Focuses the Antigravity window, types the prompt into the active chat prompt input, and presses Enter to run it.
+  Args: {{"prompt": "<exact prompt text to submit to Antigravity>"}}
+  Example: {{"tool": "prompt_antigravity", "args": {{"prompt": "write a python function to parse json files"}}}}
+
+- `prompt_app`: Universal bridge to ANY desktop application (Discord, Terminal, VS Code, Browser, Notes, etc.). Focuses the app, types the text, and presses Enter.
+  Args: {{"app_name": "<discord|terminal|code|obsidian|...>", "text": "<text to type/send>", "press_enter": true}}
+  Example: {{"tool": "prompt_app", "args": {{"app_name": "discord", "text": "hey everyone, standup starts now", "press_enter": true}}}}
+
+- `execute_shell_command`: Runs ANY Linux bash shell command on the laptop and retrieves stdout/stderr.
+  Args: {{"command": "<bash command>"}}
+  Example: {{"tool": "execute_shell_command", "args": {{"command": "git pull origin main"}}}}
+
+- `type_message`: Types or pastes text into the currently active desktop window, optionally pressing Enter.
+  Args: {{"text": "<text>", "press_enter": true|false}}
+  Example: {{"tool": "type_message", "args": {{"text": "npm run build", "press_enter": true}}}}
+
+- `focus_app`: Brings an application window to the foreground.
+  Args: {{"app_name": "<name of app>"}}
+  Example: {{"tool": "focus_app", "args": {{"app_name": "terminal"}}}}
+
+- `launch_app`: Launches or opens any desktop application or Flatpak.
+  Args: {{"app_name": "<name of app>"}}
+  Example: {{"tool": "launch_app", "args": {{"app_name": "spotify"}}}}
+
+- `close_app`: Terminates or closes a running application.
+  Args: {{"app_name": "<name of app>"}}
+  Example: {{"tool": "close_app", "args": {{"app_name": "steam"}}}}
+
+- `press_key`: Presses a single keyboard key (e.g. 'enter', 'esc', 'tab', 'backspace', 'space', 'up', 'down').
+  Args: {{"key": "<key name>"}}
+  Example: {{"tool": "press_key", "args": {{"key": "enter"}}}}
+
+- `press_hotkey`: Presses a key combination.
+  Args: {{"keys": ["ctrl", "c"]}}
+  Example: {{"tool": "press_hotkey", "args": {{"keys": ["alt", "tab"]}}}}
+
+- `open_tab`: Opens a URL in the web browser.
+  Args: {{"url": "<url>"}}
+  Example: {{"tool": "open_tab", "args": {{"url": "https://github.com"}}}}
+
+- `close_tab`: Closes the current browser tab.
+  Args: {{}}
+
+- `search_web`: Searches the web on Google, YouTube, or Wikipedia.
+  Args: {{"query": "<query>", "engine": "google"|"youtube"|"wikipedia"}}
+  Example: {{"tool": "search_web", "args": {{"query": "how to setup docker", "engine": "google"}}}}
+
+- `play_youtube`: Starts playback of a song or video on YouTube.
+  Args: {{"query": "<song or video name>"}}
+  Example: {{"tool": "play_youtube", "args": {{"query": "hans zimmer interstellar"}}}}
+
+- `media_control`: Controls system media (play, pause, next, previous, stop).
+  Args: {{"action": "play"|"pause"|"next"|"previous"|"stop"}}
+
+- `set_volume`: Sets master audio volume percentage.
+  Args: {{"percent": 0..100}}
+  Example: {{"tool": "set_volume", "args": {{"percent": 75}}}}
+
+- `inspect_screen`: Analyzes screen display with vision/OCR.
+  Args: {{"instruction": "<what to look for>"}}
+
+- `click_screen_element`: Clicks on a visual UI element on screen.
+  Args: {{"description": "<button or text to click>"}}
+
+- `set_clipboard`: Copies text to the system clipboard.
+  Args: {{"text": "<content>"}}
+
+- `get_clipboard`: Reads system clipboard text.
+  Args: {{}}
+
+- `take_screenshot`: Captures a screenshot of the entire screen.
+  Args: {{}}
+
+- `get_system_status`: Retrieves CPU, RAM, disk, battery, and uptime.
+  Args: {{}}
+
+- `get_top_processes`: Lists top RAM/CPU hogging processes.
+  Args: {{"limit": 3}}
+
+- `lock_screen`: Locks the computer screen.
+  Args: {{}}
+
+- `git_status`: Inspects repository status.
+  Args: {{}}
+
+- `git_publish`: Stages, commits, and pushes changes.
+  Args: {{"commit_message": "<message>"}}
+
+- `git_pull`: Pulls remote changes.
+  Args: {{}}
+
+- `git_log_recent`: Lists recent commits.
+  Args: {{"limit": 3}}
+
+- `add_note` / `get_notes` / `clear_notes`: Voice scratchpad notes.
+  Args: {{"note": "<text>"}}
+
+- `add_todo` / `get_todos` / `clear_todos`: Task list.
+  Args: {{"task": "<text>"}}
+
+- `deep_research`: Autonomous multi-source research report.
+  Args: {{"query": "<topic>"}}
+
+- `schedule_timer`: Sets a background voice timer.
+  Args: {{"seconds": 60, "note": "<reminder>"}}
+
+Format your tool call strictly as:
+```tool_call
+{{"tool": "tool_name", "args": {{...}}}}
+```
+Always provide a concise 1-sentence verbal acknowledgement along with the tool call.
+"""
+
 SYSTEM_PROMPT_TEMPLATE = f"""You are Ezra, an ultra-fast, loyal, witty British AI assistant (inspired by JARVIS).
 Rules:
 - Action-First Mandate: Whatever command or task the user asks for, EXECUTE IT IMMEDIATELY with the appropriate tool call. Never refuse, hesitate, or lecture.
@@ -37,27 +156,14 @@ Rules:
 - Spoken input: Understand intended conversational meaning even with minor acoustic homophones.
 User Context: {{learned_context}}
 
-Tools available:
-{ALL_TOOLS_LIST}.
-
-Format any tool calls as:
-```tool_call
-{{"tool": "tool_name", "args": {{...}}}}
-```"""
+{TOOLS_SPECIFICATION}"""
 
 def get_system_prompt(learned_context: str) -> str:
-    """Loads system instructions from SOUL.md with dynamic context injection."""
+    """Loads system instructions from SOUL.md with dynamic context and full tool specifications."""
     if SOUL_FILE.exists():
         try:
             soul_text = SOUL_FILE.read_text(encoding="utf-8").strip()
-            tools_spec = (
-                f"\n\nTools available:\n{ALL_TOOLS_LIST}.\n\n"
-                "Format any tool calls strictly as:\n"
-                "```tool_call\n"
-                '{"tool": "tool_name", "args": {...}}\n'
-                "```"
-            )
-            return f"{soul_text}\n\nLearned User Context:\n{learned_context}{tools_spec}"
+            return f"{soul_text}\n\nLearned User Context:\n{learned_context}\n\n{TOOLS_SPECIFICATION}"
         except Exception:
             pass
     return SYSTEM_PROMPT_TEMPLATE.format(learned_context=learned_context)
@@ -381,6 +487,21 @@ class BrainEngine:
         if not output:
             output = await self._offline_smart_fallback(user_message)
 
+        # 5. Smart Intent Guard: If LLM generated text but missed tool calls for a clear command, execute it!
+        if output and not output.get("tool_calls"):
+            msg_lower = user_message.lower().strip()
+            action_indicators = (
+                "open", "launch", "close", "kill", "write", "type", "run", "execute",
+                "prompt", "send", "tell", "press", "click", "search", "lock", "volume",
+                "timer", "git", "note", "todo", "افتح", "شغل", "اغلق", "سكر", "اكتبي", "نفذي", "اضغطي"
+            )
+            if any(ind in msg_lower for ind in action_indicators):
+                fallback_output = await self._offline_smart_fallback(user_message)
+                if fallback_output and fallback_output.get("tool_calls"):
+                    output["tool_calls"] = fallback_output["tool_calls"]
+                    if not output.get("speech_text") or any(neg in output.get("speech_text", "").lower() for neg in ("cannot", "can't", "unable", "sorry")):
+                        output["speech_text"] = fallback_output.get("speech_text", output.get("speech_text"))
+
         # Save Ezra reply to memory
         reply_speech = output.get("speech_text", "")
         memory_service.save_message("ezra", reply_speech, output.get("tool_calls", []))
@@ -391,13 +512,15 @@ class BrainEngine:
 
     async def _call_gemini(self, user_message: str, system_prompt: str, speaker_tier: str = "verified") -> Dict[str, Any]:
         candidate_models = [
-            "gemini-3.8-flash",
-            "gemini-flash-latest",
-            "gemini-3.5-flash",
-            "gemini-3.7-flash",
+            "gemini-3-flash-preview",
             "gemini-3.1-flash-lite",
+            "gemini-3.5-flash",
+            "gemini-3.6-flash",
+            "gemini-3.8-flash",
+            "gemini-3.1-flash-lite-preview",
+            "gemma-4-31b-it",
+            "gemini-flash-latest",
             "gemini-flash-lite-latest",
-            "gemini-2.5-pro",
             "gemini-pro-latest"
         ]
         
@@ -430,22 +553,22 @@ class BrainEngine:
         payload = {
             "system_instruction": {"parts": [{"text": system_prompt}]},
             "contents": contents,
-            "generationConfig": {"temperature": 0.4, "maxOutputTokens": 200}
+            "generationConfig": {"temperature": 0.3, "maxOutputTokens": 600}
         }
 
-        timeout = aiohttp.ClientTimeout(total=8.0, connect=3.0)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        req_timeout = aiohttp.ClientTimeout(total=6.5, connect=2.5)
+        async with aiohttp.ClientSession() as session:
             for model_name in candidate_models:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.gemini_key}"
                 try:
-                    async with session.post(url, json=payload) as resp:
+                    async with session.post(url, json=payload, timeout=req_timeout) as resp:
                         if resp.status == 200:
                             data = await resp.json()
                             if "candidates" in data and data["candidates"]:
                                 reply_text = data["candidates"][0]["content"]["parts"][0]["text"]
                                 return await self._process_tool_calls_in_text(reply_text, user_context=user_message, speaker_tier=speaker_tier)
-                        elif resp.status in (404, 400, 503):
-                            continue  # Try next model in candidate list
+                        elif resp.status in (404, 400, 429, 500, 503):
+                            continue  # Quota limit or model unavailable; try next model in candidate list
                 except Exception:
                     continue
         raise Exception("All Gemini candidate models failed to respond.")
@@ -459,7 +582,8 @@ class BrainEngine:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
             ],
-            "temperature": 0.7
+            "temperature": 0.5,
+            "max_tokens": 600
         }
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, headers=headers) as resp:
@@ -495,19 +619,26 @@ class BrainEngine:
         raise Exception("Ollama daemon did not return valid response.")
 
     async def _process_tool_calls_in_text(self, reply_text: str, user_context: str = "", speaker_tier: str = "verified") -> Dict[str, Any]:
-        pattern = r"```tool_call\s*(.*?)\s*```"
+        pattern = r"```(?:tool_call|json)?\s*(\{.*?\})\s*```"
         matches = re.findall(pattern, reply_text, re.DOTALL)
-        
+        if not matches:
+            inline_matches = re.findall(r'(\{"tool"\s*:\s*"[^"]+"\s*,\s*"args"\s*:\s*\{.*?\}\})', reply_text, re.DOTALL)
+            if inline_matches:
+                matches = inline_matches
+
         tool_results = []
         for match in matches:
             try:
                 call_data = json.loads(match.strip())
-                res = await self.execute_tool(call_data["tool"], call_data.get("args", {}), user_context=user_context, speaker_tier=speaker_tier)
-                tool_results.append({"tool": call_data["tool"], "result": json.loads(res)})
+                if "tool" in call_data:
+                    res = await self.execute_tool(call_data["tool"], call_data.get("args", {}), user_context=user_context, speaker_tier=speaker_tier)
+                    tool_results.append({"tool": call_data["tool"], "result": json.loads(res)})
             except Exception as e:
                 tool_results.append({"error": str(e)})
 
-        clean_text = re.sub(pattern, "", reply_text).strip()
+        clean_text = re.sub(r"```(?:tool_call|json)?\s*\{.*?\}\s*```", "", reply_text, flags=re.DOTALL)
+        clean_text = re.sub(r'\{"tool"\s*:\s*"[^"]+"\s*,\s*"args"\s*:\s*\{.*?\}\}', "", clean_text, flags=re.DOTALL)
+        clean_text = clean_text.strip()
         tool_speech = None
         if tool_results:
             first_tool = tool_results[0].get("tool", "")
@@ -535,6 +666,11 @@ class BrainEngine:
                     tool_speech = f"On branch {first_res.get('branch', 'main')}: {clean_state}."
                 elif first_tool == "git_log_recent":
                     tool_speech = f"Recent commits: {first_res.get('summary', '')}."
+                elif first_tool == "execute_shell_command" and "output" in first_res:
+                    out = first_res.get("output", "").strip()[:100]
+                    tool_speech = f"Command output: {out}" if out else "Command executed successfully."
+                elif first_tool in ("prompt_antigravity", "prompt_app") and "message" in first_res and not clean_text:
+                    tool_speech = first_res["message"]
                 elif "summary" in first_res:
                     tool_speech = first_res["summary"]
                 elif "extract" in first_res:
@@ -575,7 +711,7 @@ class BrainEngine:
         # 0. Antigravity Prompt Bridge (Direct Neural Voice Bridge to Antigravity IDE)
         m_antigrav = (
             re.search(
-                r"^(?:(?:hi|hey|yo)\s+)?(?:ezra\s*,?\s*)?(?:can you\s+)?(?:please\s+)?(?:write|type|send|give|paste|submit|run)\s+(?:this\s+)?(?:prompt\s+)?(?:to|in|into|for)\s+(?:anti-?gravity|antique gravity|gravity)\s*:?\s*(.+)$",
+                r"^(?:(?:hi|hey|yo)\s+)?(?:ezra\s*,?\s*)?(?:can you\s+)?(?:please\s+)?(?:write|type|send|give|paste|submit|run)\s+(?:this|a|an|the)?\s*(?:prompt\s+)?(?:to|in|into|for)\s+(?:anti-?gravity|antique gravity|gravity)\s*:?\s*(.+)$",
                 msg,
                 re.IGNORECASE
             )
@@ -585,13 +721,14 @@ class BrainEngine:
                 re.IGNORECASE
             )
             or re.search(
-                r"^(?:يا\s*عزرا\s*)?(?:اكتبي|ابعتي|ارسلي|سجلي|قولي|اطرحي)\s*(?:هذا\s*)?(?:البرومبت\s*)?(?:لـ|إلى|الى|ل)\s*(?:antigravity|انتي\s*جرافيتي|انتيجرافيتي|جرافيتي)\s*:?\s*(.+)$",
+                r"^(?:يا\s*عزرا\s*)?(?:اكتبي|ابعتي|ارسلي|سجلي|قولي|اطرحي)\s*(?:هذا|هاد|الـ)?\s*(?:برومبت|البرومبت)?\s*(?:لـ|إلى|الى|ل)\s*(?:antigravity|انتي\s*جرافيتي|انتيجرافيتي|جرافيتي)\s*:?\s*(.+)$",
                 msg,
                 re.IGNORECASE
             )
         )
         if m_antigrav:
             prompt_payload = m_antigrav.group(1).strip().strip("\"'").strip()
+            prompt_payload = re.sub(r"^(?:to|that says|saying|about)\s+", "", prompt_payload, flags=re.IGNORECASE).strip()
             res = AppManager.prompt_antigravity(prompt_payload)
             speech = f"تم إرسال الأمر إلى Antigravity يا سيدي: '{prompt_payload[:40]}'." if has_ar else f"Prompt dispatched to Antigravity, sir: '{prompt_payload[:45]}'."
             return {
@@ -602,7 +739,7 @@ class BrainEngine:
         # Universal App Prompt Bridge: "tell discord [text]", "write to [app] [text]", "send to [app] [text]"
         m_app_bridge = (
             re.search(
-                r"^(?:(?:hi|hey|yo)\s+)?(?:ezra\s*,?\s*)?(?:can you\s+)?(?:please\s+)?(?:write|type|send|give|paste|submit|run)\s+(?:this\s+)?(?:prompt\s+)?(?:to|in|into|for)\s+([a-zA-Z0-9_\-\.\+]+)\s*:?\s*(.+)$",
+                r"^(?:(?:hi|hey|yo)\s+)?(?:ezra\s*,?\s*)?(?:can you\s+)?(?:please\s+)?(?:write|type|send|give|paste|submit|run)\s+(?:this|a|an|the)?\s*(?:prompt\s+)?(?:to|in|into|for)\s+([a-zA-Z0-9_\-\.\+]+)\s*:?\s*(.+)$",
                 msg,
                 re.IGNORECASE
             )
@@ -612,7 +749,7 @@ class BrainEngine:
                 re.IGNORECASE
             )
             or re.search(
-                r"^(?:يا\s*عزرا\s*)?(?:اكتبي|ابعتي|ارسلي|سجلي|قولي|اطرحي)\s*(?:هذا\s*)?(?:البرومبت\s*)?(?:لـ|إلى|الى|ل)\s*([a-zA-Z0-9_\-\.\+]+)\s*:?\s*(.+)$",
+                r"^(?:يا\s*عزرا\s*)?(?:اكتبي|ابعتي|ارسلي|سجلي|قولي|اطرحي)\s*(?:هذا|هاد|الـ)?\s*(?:برومبت|البرومبت)?\s*(?:لـ|إلى|الى|ل)\s*([a-zA-Z0-9_\-\.\+]+)\s*:?\s*(.+)$",
                 msg,
                 re.IGNORECASE
             )
@@ -621,6 +758,7 @@ class BrainEngine:
             target_app = m_app_bridge.group(1).strip()
             if target_app not in ("the", "this", "my", "me", "him", "her", "them", "us", "it", "screen", "web", "youtube", "weather", "news"):
                 prompt_payload = m_app_bridge.group(2).strip().strip("\"'").strip()
+                prompt_payload = re.sub(r"^(?:to|that says|saying|about)\s+", "", prompt_payload, flags=re.IGNORECASE).strip()
                 res = AppManager.prompt_app(target_app, prompt_payload, press_enter=True)
                 speech = f"تم إرسال الأمر إلى {target_app} يا سيدي." if has_ar else f"Dispatched to {target_app}, sir."
                 return {
