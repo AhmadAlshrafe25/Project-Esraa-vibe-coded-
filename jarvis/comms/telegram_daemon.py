@@ -63,6 +63,22 @@ class TelegramRemoteDaemon:
             logger.warning(f"Failed to send photo: {e}")
             return False
 
+    @staticmethod
+    def _save_chat_id_to_env(chat_id: str):
+        env_file = PROJECT_ROOT / ".env"
+        if not env_file.exists():
+            return
+        try:
+            import re
+            content = env_file.read_text(encoding="utf-8")
+            if "TELEGRAM_CHAT_ID=" in content:
+                new_content = re.sub(r"TELEGRAM_CHAT_ID=.*", f"TELEGRAM_CHAT_ID={chat_id}", content)
+            else:
+                new_content = content.rstrip() + f"\nTELEGRAM_CHAT_ID={chat_id}\n"
+            env_file.write_text(new_content, encoding="utf-8")
+        except Exception as e:
+            logger.warning(f"Failed to persist TELEGRAM_CHAT_ID to .env: {e}")
+
     async def handle_update(self, update: Dict[str, Any]):
         """Dispatches an incoming Telegram message update."""
         msg = update.get("message")
@@ -72,6 +88,12 @@ class TelegramRemoteDaemon:
         chat_id = str(msg.get("chat", {}).get("id", ""))
         text = msg.get("text", "").strip()
         from_user = msg.get("from", {}).get("first_name", "Sir")
+
+        # Auto-pair master if allowed_chat_id is not yet set
+        if not self.allowed_chat_id:
+            self.allowed_chat_id = chat_id
+            self._save_chat_id_to_env(chat_id)
+            print(f"\n\033[1;32m[+] Telegram Linked to Master Chat ID: {chat_id} (Saved to .env)\033[0m")
 
         # Security check: if allowed_chat_id is set, reject unauthorized chats
         if self.allowed_chat_id and str(chat_id) != str(self.allowed_chat_id):
