@@ -39,11 +39,39 @@ echo "$CONTENT" > "$APP_FILE"
 chmod +x "$DESKTOP_FILE"
 chmod +x "$APP_FILE"
 
+# Install Holographic UI Launcher
+UI_EXEC="$DIR/run_ui.sh"
+UI_ICON="$DIR/assets/ezra_logo.png"
+chmod +x "$UI_EXEC"
+
+UI_DESKTOP_FILE="$DESKTOP_DIR/Project-Ezra-UI.desktop"
+UI_APP_FILE="$APPS_DIR/Project-Ezra-UI.desktop"
+
+UI_CONTENT="[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Project Ezra (Holographic JARVIS UI)
+GenericName=Holographic AI Console
+Comment=Futuristic 3D Holographic Neural Interface for Project Ezra
+Exec=$UI_EXEC
+Icon=$UI_ICON
+Terminal=false
+Categories=Utility;AudioVideo;System;
+StartupNotify=true
+"
+
+echo "$UI_CONTENT" > "$UI_DESKTOP_FILE"
+echo "$UI_CONTENT" > "$UI_APP_FILE"
+
+chmod +x "$UI_DESKTOP_FILE"
+chmod +x "$UI_APP_FILE"
+
 # Trust desktop file on GNOME/KDE if gio is available
 if command -v gio >/dev/null 2>&1; then
     gio set "$DESKTOP_FILE" metadata::trusted true 2>/dev/null || true
+    gio set "$UI_DESKTOP_FILE" metadata::trusted true 2>/dev/null || true
 fi
 
-echo "[+] Project Ezra Desktop Launcher successfully installed!"
-echo "    -> Desktop: $DESKTOP_FILE"
-echo "    -> App Grid: $APP_FILE"
+echo "[+] Project Ezra Desktop Launchers successfully installed!"
+echo "    -> Voice Core: $DESKTOP_FILE"
+echo "    -> Hologram UI: $UI_DESKTOP_FILE"

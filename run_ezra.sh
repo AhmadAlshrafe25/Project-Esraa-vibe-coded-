@@ -6,6 +6,12 @@
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 cd "$DIR" || exit 1
 
+# If user requested UI mode, run Holographic JARVIS UI
+if [ "$1" == "--ui" ] || [ "$1" == "-u" ] || [ "$1" == "ui" ]; then
+    shift
+    exec "$DIR/run_ui.sh" "$@"
+fi
+
 # If launched from GUI/Desktop without a terminal, spawn an interactive terminal
 if [ "$1" != "terminal" ] && [ "$1" != "--daemon" ] && [ "$1" != "-d" ] && [ "$1" != "--auto" ] && { [ ! -t 0 ] || [ ! -t 1 ]; }; then
     for term in kitty alacritty gnome-terminal konsole xfce4-terminal ptyxis foot wezterm xterm cosmic-term; do
