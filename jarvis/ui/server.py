@@ -281,6 +281,16 @@ class EzraUIServer:
 def open_ui_in_browser(host: str = "127.0.0.1", port: int = 8080):
     """Opens Ezra Holographic UI in dedicated borderless App Window or default browser."""
     url = f"http://{host}:{port}"
+    # Check for Flatpak Brave first
+    if shutil.which("flatpak"):
+        try:
+            res = subprocess.run(["flatpak", "info", "com.brave.Browser"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if res.returncode == 0:
+                subprocess.Popen(["flatpak", "run", "com.brave.Browser", f"--app={url}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return
+        except Exception:
+            pass
+
     for browser in ["google-chrome", "brave", "chromium", "firefox"]:
         if shutil.which(browser):
             try:
