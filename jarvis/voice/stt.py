@@ -536,7 +536,7 @@ class NativeSpeechRecognizer:
             dsp = AudioDSPFilter(sample_rate=sr, chunk_samples=int(sr * cd))
             self.dsp = dsp
 
-        pre_buffer = deque(maxlen=4)  # 320ms pre-speech ring buffer
+        pre_buffer = deque(maxlen=6)  # 480ms pre-speech ring buffer so opening words are never clipped
         recorded_frames = []
         is_speaking = False
         self.is_user_speaking = False
