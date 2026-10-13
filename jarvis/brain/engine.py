@@ -21,7 +21,7 @@ SOUL_FILE = PROJECT_ROOT / "SOUL.md"
 ALL_TOOLS_LIST = (
     "inspect_screen, click_screen_element, type_message, dictate_text, press_key, press_hotkey, "
     "toggle_voice, set_voice_mode, get_weather, get_crypto_price, get_exchange_rate, search_wikipedia, get_network_info, "
-    "get_tech_news, get_github_info, open_tab, search_web, play_youtube, launch_app, close_app, "
+    "get_tech_news, get_github_info, open_tab, close_tab, close_browser, search_web, play_youtube, launch_app, close_app, "
     "send_discord_message, take_screenshot, media_control, get_system_status, set_volume, remember_fact, "
     "execute_shell_command, send_email, send_telegram, get_daily_briefing, send_desktop_notification, "
     "schedule_timer, git_status, git_publish, git_log_recent, deep_research"
@@ -121,6 +121,10 @@ class BrainEngine:
             elif tool_name == "open_tab":
                 url = args.get("url", "") or args.get("link", "")
                 res = BrowserManager.open_url(url)
+            elif tool_name == "close_tab":
+                res = BrowserManager.close_tab()
+            elif tool_name == "close_browser":
+                res = BrowserManager.close_browser(args.get("browser_name", ""))
             elif tool_name == "search_web":
                 query = args.get("query") or args.get("q") or args.get("search") or args.get("search_query") or args.get("keyword") or user_context.strip()
                 res = BrowserManager.search_web(query, args.get("engine", "google"))
@@ -482,7 +486,9 @@ class BrainEngine:
 
     async def _offline_smart_fallback(self, user_message: str) -> Dict[str, Any]:
         msg = user_message.lower().strip()
-        
+        has_ar = bool(re.search(r"[\u0600-\u06FF]", msg))
+
+        # 1. Executive Daily Briefing
         if "brief" in msg or "موجز" in msg or "morning" in msg:
             res = api_manager.get_daily_briefing()
             return {
@@ -490,6 +496,7 @@ class BrainEngine:
                 "tool_calls": [{"tool": "get_daily_briefing", "result": res}]
             }
 
+        # 2. Git Automation
         if "git status" in msg or "حالة الجت" in msg or "branch status" in msg:
             res = SystemManager.git_status()
             clean_state = "working tree clean" if res.get("is_clean") else f"{res.get('modified_files_count')} uncommitted files"
@@ -512,6 +519,7 @@ class BrainEngine:
                 "tool_calls": [{"tool": "git_log_recent", "result": res}]
             }
 
+        # 3. Background Timers
         m_timer = re.search(r"(?:set|start)?\s*(?:a\s*)?timer\s*(?:for)?\s*(\d+)\s*(sec|second|seconds|min|minute|minutes)", msg) or re.search(r"مؤقت\s*(?:لمدة)?\s*(\d+)\s*(ثانية|دقيقة)", msg)
         if m_timer:
             val = int(m_timer.group(1))
@@ -523,6 +531,174 @@ class BrainEngine:
                 "tool_calls": [{"tool": "schedule_timer", "result": res}]
             }
 
+        # 4. Compound Directive: Stop playback AND close browser tab
+        if any(s in msg for s in ("stop", "pause", "توقف", "وقف")) and any(t in msg for t in ("tab", "close", "سكر", "اغلق")):
+            res_media = SystemManager.media_control("pause")
+            res_tab = BrowserManager.close_tab()
+            speech = "تم إيقاف الأغنية وإغلاق التبويب يا سيدي." if has_ar else "Stopped playback and closed the tab, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [
+                    {"tool": "media_control", "result": res_media},
+                    {"tool": "close_tab", "result": res_tab}
+                ]
+            }
+
+        # 5. Media Control: Stop / Pause playback
+        if (
+            any(w in msg for w in (
+                "stop the song", "stop song", "stop the music", "stop music", "pause the song",
+                "pause music", "pause song", "stop playing", "pause playback", "stop playback"
+            ))
+            or ("stop" in msg and any(m in msg for m in ("song", "music", "track", "audio", "video", "youtube")))
+            or ("pause" in msg and any(m in msg for m in ("song", "music", "track", "audio", "video", "youtube")))
+            or any(w in msg for w in ("وقف الأغنية", "وقف الموسيقى", "وقف الغنية", "وقف الفيديو", "توقف عن التشغيل"))
+            or msg in ("pause", "stop", "وقف", "توقف")
+        ):
+            res = SystemManager.media_control("pause")
+            speech = "حاضر يا سيدي، تم إيقاف التشغيل." if has_ar else "Playback paused, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "media_control", "result": res}]
+            }
+
+        # 6. Media Control: Resume / Play playback
+        if (
+            any(w in msg for w in (
+                "resume the song", "resume song", "resume music", "play song", "continue music",
+                "continue song", "unpause", "keep playing"
+            ))
+            or any(w in msg for w in ("شغل الأغنية", "شغل الموسيقى", "كمل الأغنية", "تابع التشغيل"))
+            or msg in ("resume", "play", "unpause", "شغل")
+        ):
+            res = SystemManager.media_control("play")
+            speech = "تم استئناف التشغيل يا سيدي." if has_ar else "Resuming playback, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "media_control", "result": res}]
+            }
+
+        # 7. Media Control: Next / Previous Track
+        if any(w in msg for w in ("next song", "next track", "skip song", "skip track", "الأغنية التالية", "التالي")):
+            res = SystemManager.media_control("next")
+            speech = "الأغنية التالية، يا سيدي." if has_ar else "Skipping to the next track, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "media_control", "result": res}]
+            }
+
+        if any(w in msg for w in ("previous song", "previous track", "last song", "الأغنية السابقة", "السابق")):
+            res = SystemManager.media_control("previous")
+            speech = "الأغنية السابقة، يا سيدي." if has_ar else "Playing previous track, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "media_control", "result": res}]
+            }
+
+        # 8. Close Active Tab
+        if (
+            any(w in msg for w in ("close the tab", "close tab", "close this tab", "kill tab", "exit tab"))
+            or any(w in msg for w in ("سكر التاب", "اغلق التبويب", "سكر التبويب", "اغلق الصفحة"))
+        ):
+            res = BrowserManager.close_tab()
+            speech = "تم إغلاق التبويب يا سيدي." if has_ar else "Closed the active tab, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "close_tab", "result": res}]
+            }
+
+        # 9. Close Browser Session
+        if any(w in msg for w in (
+            "close chrome", "close google chrome", "close browser", "close the browser",
+            "close brave", "close firefox", "close youtube", "سكر الكروم", "سكر المتصفح"
+        )):
+            res = BrowserManager.close_browser()
+            speech = "تم إغلاق المتصفح يا سيدي." if has_ar else "Closed the browser session, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "close_browser", "result": res}]
+            }
+
+        # 10. Close Desktop Application
+        m_close_app = re.search(r"(?:close|kill|exit|quit|سكر|اغلق)\s+(discord|terminal|files|vlc|code|vscode|calculator|spotify|obs|antigravity)", msg)
+        if m_close_app:
+            app_to_kill = m_close_app.group(1)
+            res = AppManager.close_app(app_to_kill)
+            speech = f"تم إغلاق {app_to_kill} يا سيدي." if has_ar else f"Closed {app_to_kill}, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "close_app", "result": res}]
+            }
+
+        # 11. Launch Desktop Application
+        m_launch_app = re.search(r"(?:open|launch|start|شغل|افتح)\s+(discord|terminal|files|vlc|code|vscode|calculator|spotify|obs|settings|brave|firefox|chrome)", msg)
+        if m_launch_app:
+            app_to_open = m_launch_app.group(1)
+            res = AppManager.launch_app(app_to_open)
+            speech = f"جاري تشغيل {app_to_open} يا سيدي." if has_ar else f"Launching {app_to_open} for you, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "launch_app", "result": res}]
+            }
+
+        # 12. Volume Controls
+        if any(w in msg for w in ("volume up", "louder", "turn it up", "علي الصوت", "ارفع الصوت")):
+            res = SystemManager.set_volume(85)
+            speech = "تم رفع مستوى الصوت يا سيدي." if has_ar else "Turned the volume up, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "set_volume", "result": res}]
+            }
+
+        if any(w in msg for w in ("volume down", "quieter", "turn it down", "وطي الصوت", "اخفض الصوت")):
+            res = SystemManager.set_volume(35)
+            speech = "تم خفض مستوى الصوت يا سيدي." if has_ar else "Turned the volume down, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "set_volume", "result": res}]
+            }
+
+        if any(w in msg for w in ("mute volume", "mute sound", "mute pc", "mute laptop", "اكتم الصوت")):
+            res = SystemManager.set_volume(0)
+            speech = "تم كتم صوت النظام يا سيدي." if has_ar else "Master audio muted, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "set_volume", "result": res}]
+            }
+
+        m_vol = re.search(r"(?:set\s+)?volume\s+(?:to\s+)?(\d+)", msg) or re.search(r"الصوت\s+(?:على\s+)?(\d+)", msg)
+        if m_vol:
+            pct = int(m_vol.group(1))
+            res = SystemManager.set_volume(pct)
+            return {
+                "speech_text": f"Volume set to {pct}%, sir.",
+                "tool_calls": [{"tool": "set_volume", "result": res}]
+            }
+
+        # 13. Screen Screenshot
+        if any(w in msg for w in ("take a screenshot", "take screenshot", "screenshot", "capture screen", "صور الشاشة", "لقطة شاشة", "سكرين شوت")):
+            res = AppManager.take_screenshot()
+            speech = "تم التقاط صورة للشاشة وحفظها يا سيدي." if has_ar else "Screenshot captured and saved, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "take_screenshot", "result": res}]
+            }
+
+        # 14. Top Tech News
+        if any(w in msg for w in ("tech news", "hacker news", "technology news", "اخبار التقنية", "أخبار التكنولوجيا")):
+            res = api_manager.get_tech_news(limit=3)
+            articles = res.get("articles", [])
+            if articles:
+                titles = ". ".join([a.get("title", "") for a in articles if a.get("title")])
+                speech = f"Top tech headlines: {titles}."
+            else:
+                speech = "Could not fetch top tech news at the moment, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "get_tech_news", "result": res}]
+            }
+
+        # 15. Autonomous Web & Knowledge Research
         if msg.startswith("research ") or msg.startswith("deep research ") or msg.startswith("ابحث عن "):
             clean_q = re.sub(r"^(research|deep research|ابحث عن)\s*", "", user_message, flags=re.IGNORECASE).strip()
             res = await ResearchSubAgent.deep_research(clean_q)
@@ -531,6 +707,7 @@ class BrainEngine:
                 "tool_calls": [{"tool": "deep_research", "result": res}]
             }
 
+        # 16. YouTube / Media Playback
         if "movie" in msg or "watch" in msg or "youtube" in msg:
             clean_q = re.sub(r"(open|watch|play|movie|video|on youtube)", "", msg).strip() or "trending movies"
             res = BrowserManager.play_youtube_video_or_music(clean_q)
@@ -538,14 +715,16 @@ class BrainEngine:
                 "speech_text": f"Right away, sir. Pulling up {clean_q} on YouTube.",
                 "tool_calls": [{"tool": "play_youtube", "result": res}]
             }
-        
-        if "status" in msg or "diagnostics" in msg or "system" in msg:
+
+        # 17. System Health & Hardware Diagnostics
+        if "status" in msg or "diagnostics" in msg or "system" in msg or "مواصفات" in msg:
             res = SystemManager.get_system_status()
             return {
                 "speech_text": f"Systems operational. CPU load is at {res['cpu_percent']}, and memory usage is {res['ram_used_gb']}.",
                 "tool_calls": [{"tool": "get_system_status", "result": res}]
             }
 
+        # 18. Voice Mute / Unmute
         if "mute" in msg or "be quiet" in msg or "silent" in msg or "shh" in msg or "stop talking" in msg:
             voice_speaker.set_muted(True)
             return {
@@ -560,6 +739,7 @@ class BrainEngine:
                 "tool_calls": [{"tool": "toggle_voice", "result": {"status": "success", "message": "Voice unmuted"}}]
             }
 
+        # 19. Cybernetic Robot vs Silky Neural Voice Switching
         if any(w in msg for w in ("robot voice", "robotic voice", "robot mode", "صوت روبوت", "صوت آلي")):
             voice_speaker.set_robotic_mode(True)
             return {
@@ -574,6 +754,7 @@ class BrainEngine:
                 "tool_calls": [{"tool": "set_voice_mode", "result": {"mode": "neural"}}]
             }
 
+        # 20. Live Typing & Dictation into Active Window
         if msg.startswith("type ") or msg.startswith("dictate ") or msg.startswith("write "):
             text_to_type = re.sub(r"^(type|dictate|write)\s*(this|out|for me|the following)?\s*:?\s*", "", user_message, flags=re.IGNORECASE).strip()
             res = AppManager.type_message(text_to_type, press_enter=False)
@@ -582,7 +763,8 @@ class BrainEngine:
                 "tool_calls": [{"tool": "type_message", "result": res}]
             }
 
-        if "weather" in msg or "temperature" in msg:
+        # 21. Live Weather
+        if "weather" in msg or "temperature" in msg or "طقس" in msg or "حرارة" in msg:
             city_match = re.search(r"in ([a-zA-Z\s]+)", msg)
             city = city_match.group(1).strip() if city_match else ""
             res = api_manager.get_weather(city)
@@ -592,6 +774,7 @@ class BrainEngine:
                 "tool_calls": [{"tool": "get_weather", "result": res}]
             }
 
+        # 22. Live Crypto Prices
         if "crypto" in msg or "bitcoin" in msg or "btc" in msg or "ethereum" in msg:
             res = api_manager.get_crypto_price()
             data = res.get("data", {})
@@ -602,6 +785,7 @@ class BrainEngine:
                 "tool_calls": [{"tool": "get_crypto_price", "result": res}]
             }
 
+        # 23. Network Info
         if "network" in msg or "wifi" in msg or "ip" in msg:
             res = api_manager.get_network_info()
             net = res.get("network", {})
@@ -610,6 +794,7 @@ class BrainEngine:
                 "tool_calls": [{"tool": "get_network_info", "result": res}]
             }
 
+        # 24. Screen OCR & Vision Inspection
         if "screen" in msg or "look" in msg:
             analysis = screen_vision.analyze_screen(user_message)
             return {
@@ -617,6 +802,7 @@ class BrainEngine:
                 "tool_calls": [{"tool": "inspect_screen", "result": {"message": analysis}}]
             }
 
+        # 25. Open Google / Browser Tab
         if "open" in msg and ("google" in msg or "chrome" in msg or "tab" in msg):
             res = BrowserManager.open_url("https://google.com")
             return {
@@ -624,8 +810,56 @@ class BrainEngine:
                 "tool_calls": [{"tool": "open_tab", "result": res}]
             }
 
+        # 26. Capabilities / Help / What Can You Do
+        if any(w in msg for w in (
+            "what can you do", "what can she do", "what do you do", "capabilities",
+            "what are your skills", "help me", "commands", "شو بتعرفي تعملي", "شو بتعملي", "ما هي قدراتك"
+        )):
+            speech = (
+                "أنا مساعدتك الشخصية عزرا يا سيدي. يمكنني التحكم في تشغيل الموسيقى والوسائط، إغلاق وفتح التبويبات والتطبيقات، التقاط صور للشاشة، ضبط مستوى الصوت، مراقبة موارد النظام، إعداد المؤقتات، إجراء أبحاث الويب، متابعة أسعار العملات والطقس، وأتمتة Git والمزامنة مع تيليجرام. لتفعيل التفكير الحواري الكامل، يمكنك إضافة مفتاح Google AI Studio المجاني في ملف الإعدادات."
+                if has_ar
+                else "I control media playback, close and open browser tabs, launch and kill applications, take screenshots, adjust master audio, monitor system health, set background timers, conduct deep web research, track crypto and weather, automate Git workflows, and sync with Telegram. Adding a free Gemini key in your config unlocks full open-ended conversational reasoning."
+            )
+            return {
+                "speech_text": speech,
+                "tool_calls": []
+            }
+
+        # 27. Encyclopedic / Definition Lookups (Wikipedia / DuckDuckGo)
+        m_wiki = re.search(r"^(?:who is|what is|tell me about|define|من هو|من هي|ما هو|ما هي|عرف)\s+(.+)", msg)
+        if m_wiki:
+            topic = m_wiki.group(1).strip()
+            topic = re.sub(r"[?!.,]+$", "", topic)
+            res = api_manager.search_instant_answer(topic)
+            answer = res.get("answer") or res.get("extract") or ""
+            if answer:
+                summary = answer[:260] + ("..." if len(answer) > 260 else "")
+                return {
+                    "speech_text": summary,
+                    "tool_calls": [{"tool": "search_wikipedia", "result": res}]
+                }
+
+        # 28. Intelligent Fallback (Try quick instant search if multi-word query)
+        if len(msg.split()) >= 2 and not any(w in msg for w in ("hello", "hey", "hi", "test")):
+            try:
+                res = api_manager.search_instant_answer(user_message)
+                answer = res.get("answer") or res.get("extract") or ""
+                if answer:
+                    summary = answer[:260] + ("..." if len(answer) > 260 else "")
+                    return {
+                        "speech_text": summary,
+                        "tool_calls": [{"tool": "search_wikipedia", "result": res}]
+                    }
+            except Exception:
+                pass
+
+        fallback_speech = (
+            "في خدمتك يا سيدي. يمكنك أمري بالتحكم في الموسيقى، إغلاق التبويبات، فتح التطبيقات، فحص النظام، أو إجراء أبحاث الويب."
+            if has_ar
+            else "At your command, sir. You can instruct me to control media, close tabs, launch apps, adjust audio, run web research, or check system status."
+        )
         return {
-            "speech_text": "Online and standing by. I am listening.",
+            "speech_text": fallback_speech,
             "tool_calls": []
         }
 

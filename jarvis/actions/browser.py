@@ -94,3 +94,18 @@ class BrowserManager:
         direct_url = BrowserManager._resolve_first_youtube_video(clean_q)
         BrowserManager._launch_url_reliably(direct_url)
         return {"status": "success", "message": f"Starting playback of '{clean_q}' on YouTube now, sir."}
+
+    @staticmethod
+    def close_tab() -> dict:
+        """Closes the current browser tab via Ctrl+W hotkey."""
+        from jarvis.actions.apps import AppManager
+        return AppManager.press_hotkey(["ctrl", "w"])
+
+    @staticmethod
+    def close_browser(browser_name: str = "") -> dict:
+        """Closes browser instances (Chrome, Brave, Firefox)."""
+        from jarvis.actions.apps import AppManager
+        targets = [browser_name] if browser_name else ["google-chrome", "google-chrome-stable", "brave", "firefox"]
+        for b in targets:
+            AppManager.close_app(b)
+        return {"status": "success", "message": "Closed browser session, sir."}
