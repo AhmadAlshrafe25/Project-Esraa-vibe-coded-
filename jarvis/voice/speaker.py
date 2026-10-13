@@ -83,6 +83,11 @@ class SmoothSpeaker:
         """Immediately cuts off and silences Ezra's speech output."""
         self.is_interrupted = True
         self.is_speaking = False
+        try:
+            from jarvis.ui.visuals import status_bar
+            status_bar.stop_speaking()
+        except Exception:
+            pass
         if HAS_PYGAME_MIXER:
             try:
                 pygame.mixer.music.stop()
@@ -122,19 +127,16 @@ class SmoothSpeaker:
                 self.is_speaking = False
                 return True
 
-        # 1. Start live synchronized typewriter in background thread
-        print_thread = None
+        # 1. Print message text cleanly if requested
         if live_print and text:
-            from jarvis.ui.visuals import visualizer
-            print_thread = threading.Thread(
-                target=visualizer.moving_print,
-                args=(text,),
-                kwargs={"prefix": prefix, "delay": 0.012, "stop_check": lambda: self.is_interrupted},
-                daemon=True
-            )
-            print_thread.start()
+            clean_p = prefix if (not prefix or prefix.endswith(" ")) else (prefix + " ")
+            print(f"{clean_p}{text}", flush=True)
 
-        # 2. Setup non-blocking keyboard listener with flushed buffer
+        # 2. Start speaking status bar waveform
+        from jarvis.ui.visuals import status_bar
+        status_bar.start_speaking(text)
+
+        # 3. Setup non-blocking keyboard listener with flushed buffer
         fd = None
         old_settings = None
         if sys.stdin.isatty():
@@ -149,7 +151,7 @@ class SmoothSpeaker:
                 fd = None
 
         try:
-            while (is_playing() or (print_thread and print_thread.is_alive())) and not self.is_interrupted:
+            while is_playing() and not self.is_interrupted:
                 if fd is not None:
                     r, _, _ = select.select([sys.stdin], [], [], 0)
                     if r:
@@ -162,6 +164,7 @@ class SmoothSpeaker:
                 time.sleep(0.02)
 
         finally:
+            status_bar.stop_speaking()
             # Restore terminal attributes cleanly
             if fd is not None and old_settings is not None:
                 try:
@@ -172,10 +175,6 @@ class SmoothSpeaker:
 
         was_interrupted = self.is_interrupted
         self.is_speaking = False
-
-        if print_thread and print_thread.is_alive():
-            print_thread.join(timeout=0.2)
-
         return not was_interrupted
 
     async def _generate_edge_speech(self, text: str, voice_name: str) -> str:
@@ -288,8 +287,8 @@ class SmoothSpeaker:
         """
         if self.is_muted or not text or not text.strip():
             if live_print and text:
-                from jarvis.ui.visuals import visualizer
-                visualizer.moving_print(text, prefix=prefix)
+                clean_p = prefix if (not prefix or prefix.endswith(" ")) else (prefix + " ")
+                print(f"{clean_p}{text.strip()}", flush=True)
             return True
 
         sentences = self._split_sentences(text.strip())
@@ -301,12 +300,16 @@ class SmoothSpeaker:
             if audio_file and os.path.exists(audio_file):
                 return self._play_file_with_interrupt(audio_file, text=sentences[0], prefix=prefix, live_print=live_print)
             elif live_print:
-                from jarvis.ui.visuals import visualizer
-                visualizer.moving_print(sentences[0], prefix=prefix)
+                clean_p = prefix if (not prefix or prefix.endswith(" ")) else (prefix + " ")
+                print(f"{clean_p}{sentences[0]}", flush=True)
             return True
 
-        # Pipelined Multi-Sentence Streaming:
-        # Pre-fetch next sentence audio in background while current sentence is actively playing
+        # Multi-Sentence Streaming:
+        # Print full response text once up front so user sees complete message immediately
+        if live_print and text:
+            clean_p = prefix if (not prefix or prefix.endswith(" ")) else (prefix + " ")
+            print(f"{clean_p}{text.strip()}", flush=True)
+
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         next_future = executor.submit(self._prepare_audio_file, sentences[0])
 
@@ -323,18 +326,20 @@ class SmoothSpeaker:
             if i + 1 < len(sentences) and not self.is_interrupted:
                 next_future = executor.submit(self._prepare_audio_file, sentences[i + 1])
 
-            curr_prefix = prefix if i == 0 else " "
             if audio_file and os.path.exists(audio_file):
-                completed = self._play_file_with_interrupt(audio_file, text=sentence, prefix=curr_prefix, live_print=live_print)
+                completed = self._play_file_with_interrupt(audio_file, text=sentence, prefix="", live_print=False)
                 if not completed:
                     self.stop()
                     executor.shutdown(wait=False, cancel_futures=True)
                     return False
-            elif live_print:
-                from jarvis.ui.visuals import visualizer
-                visualizer.moving_print(sentence, prefix=curr_prefix)
 
         executor.shutdown(wait=False)
+        self.is_speaking = False
+        try:
+            from jarvis.ui.visuals import status_bar
+            status_bar.stop_speaking()
+        except Exception:
+            pass
         return not self.is_interrupted
 
 voice_speaker = SmoothSpeaker()

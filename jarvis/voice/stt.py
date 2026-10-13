@@ -52,6 +52,17 @@ class AudioStreamWorker:
 
     def _start_capture(self):
         """Spawns direct PipeWire/PulseAudio capture process with fallback to ALSA."""
+        if self.proc:
+            try:
+                self.proc.terminate()
+                self.proc.wait(timeout=0.1)
+            except Exception:
+                try:
+                    self.proc.kill()
+                except Exception:
+                    pass
+            self.proc = None
+
         if shutil.which("parec"):
             try:
                 self.proc = subprocess.Popen(
@@ -87,11 +98,13 @@ class AudioStreamWorker:
             return pcm_data, 0.0
 
     def _read_exact(self, num_bytes: int) -> bytes:
-        """Reads exactly num_bytes from process stdout pipe."""
+        """Reads exactly num_bytes from process stdout pipe with process liveness checking."""
         chunks = []
         bytes_read = 0
         while bytes_read < num_bytes and self.running:
             try:
+                if not self.proc or not self.proc.stdout or (self.proc.poll() is not None):
+                    break
                 part = self.proc.stdout.read(num_bytes - bytes_read)
                 if not part:
                     break
@@ -127,11 +140,19 @@ class AudioStreamWorker:
 
         self.calibrated = True
 
-        # 3. Continuous Steady Capture Loop
+        # 3. Continuous Steady Capture Loop with Auto-Recovery
         while self.running:
             raw = self._read_exact(self.chunk_size)
-            if not raw:
-                break
+            if not raw or len(raw) < self.chunk_size:
+                if not self.running:
+                    break
+                # Audio pipe reset or closed: re-spawn capture process immediately!
+                time.sleep(0.06)
+                try:
+                    self._start_capture()
+                except Exception:
+                    pass
+                continue
 
             # Check if Ezra is speaking aloud through speakers or headset
             is_ezra_speaking = False
@@ -297,6 +318,8 @@ class NativeSpeechRecognizer:
         - Snappy endpointing: detects end of utterance within ~650ms of silence.
         - Noise immunity: isolated room ticks do not reset silence countdown.
         """
+        from jarvis.ui.visuals import status_bar
+
         ensure_hardware_mic_volume()
         self.last_streaming_transcription = ""
         self.last_spk_vector = []
@@ -305,10 +328,13 @@ class NativeSpeechRecognizer:
         # Wait for worker calibration before we start listening (fast 1.5s max)
         calib_deadline = time.time() + 1.5
         while not self.worker.calibrated and time.time() < calib_deadline:
-            time.sleep(0.03)
+            time.sleep(0.02)
 
-        # Drain stale audio chunks from before listening began
-        self.worker.drain(keep_recent=2)
+        # Drain stale audio chunks from before listening began (0 keeps zero echo from speaker)
+        self.worker.drain(keep_recent=0)
+
+        # Immediate mic handover: render live mic indicator instantly!
+        status_bar.render_listening(level=0, is_heard=False)
 
         pre_buffer = deque(maxlen=4)  # 320ms pre-speech ring buffer
         recorded_frames = []
@@ -326,7 +352,7 @@ class NativeSpeechRecognizer:
             while True:
                 item = self.worker.get_chunk()
                 if item is None:
-                    time.sleep(0.015)
+                    time.sleep(0.01)
                     if not is_speaking and (time.time() - start_time > max_wait_sec):
                         break
                     continue
@@ -340,7 +366,6 @@ class NativeSpeechRecognizer:
                 excess = max(0.0, ac_rms - baseline)
                 scale_span = max(baseline * 1.1, 200.0)
                 level = min(10, max(0, int((excess / scale_span) * 10)))
-                meter_bar = "█" * level + "░" * (10 - level)
 
                 if ac_rms > speech_threshold:
                     consecutive_voice_chunks += 1
@@ -353,7 +378,7 @@ class NativeSpeechRecognizer:
                         recorded_frames.append(chunk)
                         speech_chunks_count += 1
                         silence_chunks = 0
-                        print(f"\r\033[1;32m[🎙 Heard You   |{meter_bar}|]\033[0m\033[K", end="", flush=True)
+                        status_bar.render_listening(level=level, is_heard=True)
 
                         if time.time() - speech_start_time > max_speech_sec:
                             break
@@ -362,7 +387,7 @@ class NativeSpeechRecognizer:
                     if is_speaking:
                         recorded_frames.append(chunk)
                         silence_chunks += 1
-                        print(f"\r\033[1;32m[🎙 Heard You   |{meter_bar}|]\033[0m\033[K", end="", flush=True)
+                        status_bar.render_listening(level=level, is_heard=True)
 
                         # Dual-Stage Adaptive Endpointing (Zero-Cons Architecture):
                         # 1. Thinking & Hesitation Guard: If speech is brief (< 1.1s, e.g. "Ezra..."),
@@ -374,7 +399,7 @@ class NativeSpeechRecognizer:
                             break
                     else:
                         pre_buffer.append(chunk)
-                        print(f"\r\033[1;36m[🎙 Listening   |{meter_bar}|]\033[0m\033[K", end="", flush=True)
+                        status_bar.render_listening(level=level, is_heard=False)
                         if time.time() - start_time > max_wait_sec:
                             break
 
@@ -388,7 +413,7 @@ class NativeSpeechRecognizer:
                     pass
 
         finally:
-            print("\r\033[K", end="", flush=True)
+            status_bar.clear()
 
         # Noise Rejection Filter: If user spoke less than 2 chunks (<0.16s), discard
         if not recorded_frames or not is_speaking or speech_chunks_count < 2:

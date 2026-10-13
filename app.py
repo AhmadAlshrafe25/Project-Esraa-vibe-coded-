@@ -47,10 +47,13 @@ async def handle_turn(text: str, speaker_tier: str = "verified") -> dict:
 
     print(f"\n\033[1;34m[You]:\033[0m {text}")
 
-    # Simple thinking indicator
-    print("\033[1;33m  ... thinking\033[0m", end="", flush=True)
-    response = await brain_service.think(text, speaker_tier=speaker_tier)
-    print("\r\033[K", end="", flush=True)  # Clear the "thinking" line
+    # Animated Futuristic Thinking Loading Bar
+    from jarvis.ui.visuals import status_bar
+    status_bar.start_thinking("Reasoning with AI...")
+    try:
+        response = await brain_service.think(text, speaker_tier=speaker_tier)
+    finally:
+        status_bar.stop_thinking()
 
     reply_speech = response.get("speech_text", "")
     tools = response.get("tool_calls", [])
@@ -168,87 +171,95 @@ def continuous_conversation_loop():
     # Immediate voice prompt so user verifies headset audio is live
     voice_speaker.speak("I'm listening, sir. Speak freely.", prefix="\033[1;36m[Ezra]:\033[0m ", live_print=True)
 
+    from jarvis.ui.visuals import status_bar
+
     try:
         while True:
-            # Check dwell timeout if currently awake
-            if loop_state["is_awake"] and (time.time() - loop_state["last_interaction_time"] > DWELL_TIMEOUT_SEC):
-                loop_state["is_awake"] = False
-                timeout_msg = "Three minutes idle. Entering standby mode, sir. Say 'Ezra' anytime."
-                print(f"\n\033[1;33m[Standby]:\033[0m {timeout_msg}\n")
-                voice_speaker.speak(timeout_msg)
-
-            # Record turn from microphone with fast 320ms endpointing
-            audio_file = stt_engine.record_until_finished(max_wait_sec=8.0, silence_threshold_sec=0.32)
-            if not audio_file:
-                time.sleep(0.04)
-                continue
-
-            transcription = stt_engine.transcribe_audio_file(audio_file)
-            print("\r\033[K", end="", flush=True)
-
-            pcm_data = stt_engine.get_last_pcm()
-
-            # Speaker biometrics evaluation (3-tier security)
-            tier, score, detail = voice_dna.verify_turn(pcm_data, transcription)
-
-            if not transcription or not transcription.strip():
-                # Ambient tick or empty sound
-                continue
-
-            # Always display captured transcription so user has visual feedback
-            print(f"\n\033[1;34m[Heard]:\033[0m \"{transcription}\" \033[1;30m(Tier: {tier})\033[0m")
-
-            # Check if sleep command
-            clean_low = transcription.lower().strip()
-            is_sleep = (
-                clean_low in ("stop listening", "exit conversation", "sleep", "go to sleep", "sleep now", "be quiet", "shut down")
-                or any(w in clean_low for w in ("اسكت", "نام", "توقف", "مع السلامة", "اخرس"))
-            )
-            if is_sleep:
-                loop_state["is_awake"] = False
-                farewell = "حاضر يا سيدي، في وضع الاستعداد." if re.search(r"[\u0600-\u06FF]", clean_low) else "Entering standby, sir. Say 'Ezra' anytime to wake me."
-                voice_speaker.speak(farewell, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
-                continue
-
-            if not loop_state["is_awake"]:
-                # In standby: check for wake word
-                has_wake, command = check_wake_word(transcription)
-                if not has_wake:
-                    print(f"\033[1;33m[Standby Mode]:\033[0m Say 'Ezra' or tap ENTER to activate.")
-                    continue
-
-                loop_state["is_awake"] = True
-                loop_state["last_interaction_time"] = time.time()
-                print(f"\033[1;32m[⚡ WAKE TRIGGERED]\033[0m Biometrics: {tier.upper()} ({score:.2f})")
-
-                if command:
-                    turn_res = asyncio.run(handle_turn(command, speaker_tier=tier))
-                    loop_state["last_interaction_time"] = time.time()
-                    if isinstance(turn_res, dict) and not turn_res.get("should_continue", True):
-                        loop_state["is_awake"] = False
-                else:
-                    has_ar = bool(re.search(r"[\u0600-\u06FF]", transcription))
-                    greet = "أهلاً بك يا سيدي، في خدمتك دائماً." if has_ar else "Good day, sir. At your command."
-                    voice_speaker.speak(greet, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
-            else:
-                # Currently awake (Active 3-minute dwell mode)
-                loop_state["last_interaction_time"] = time.time()
-
-                # Check if user just said 'Ezra' to check liveness
-                has_wake, command = check_wake_word(transcription)
-                actual_query = command if (has_wake and command) else transcription
-
-                if has_wake and not command:
-                    voice_speaker.speak("Right beside you, sir.", prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
-                    continue
-
-                turn_res = asyncio.run(handle_turn(actual_query, speaker_tier=tier))
-                loop_state["last_interaction_time"] = time.time()
-                should_continue = turn_res.get("should_continue", True) if isinstance(turn_res, dict) else turn_res
-                if not should_continue:
+            try:
+                # Check dwell timeout if currently awake
+                if loop_state["is_awake"] and (time.time() - loop_state["last_interaction_time"] > DWELL_TIMEOUT_SEC):
                     loop_state["is_awake"] = False
+                    timeout_msg = "Three minutes idle. Entering standby mode, sir. Say 'Ezra' anytime."
+                    print(f"\n\033[1;33m[Standby]:\033[0m {timeout_msg}\n")
+                    voice_speaker.speak(timeout_msg)
 
-            time.sleep(0.06)
+                # Instant Mic Handover: render live mic indicator immediately!
+                status_bar.render_listening(level=0, is_heard=False)
+
+                # Record turn from microphone with fast 320ms endpointing
+                audio_file = stt_engine.record_until_finished(max_wait_sec=8.0, silence_threshold_sec=0.32)
+                if not audio_file:
+                    continue
+
+                status_bar.start_thinking("Processing voice...")
+                transcription = stt_engine.transcribe_audio_file(audio_file)
+                status_bar.stop_thinking()
+
+                pcm_data = stt_engine.get_last_pcm()
+
+                # Speaker biometrics evaluation (3-tier security)
+                tier, score, detail = voice_dna.verify_turn(pcm_data, transcription)
+
+                if not transcription or not transcription.strip():
+                    # Ambient tick or empty sound
+                    continue
+
+                # Always display captured transcription so user has visual feedback
+                print(f"\n\033[1;34m[Heard]:\033[0m \"{transcription}\" \033[1;30m(Tier: {tier})\033[0m")
+
+                # Check if sleep command
+                clean_low = transcription.lower().strip()
+                is_sleep = (
+                    clean_low in ("stop listening", "exit conversation", "sleep", "go to sleep", "sleep now", "be quiet", "shut down")
+                    or any(w in clean_low for w in ("اسكت", "نام", "توقف", "مع السلامة", "اخرس"))
+                )
+                if is_sleep:
+                    loop_state["is_awake"] = False
+                    farewell = "حاضر يا سيدي، في وضع الاستعداد." if re.search(r"[\u0600-\u06FF]", clean_low) else "Entering standby, sir. Say 'Ezra' anytime to wake me."
+                    voice_speaker.speak(farewell, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
+                    continue
+
+                if not loop_state["is_awake"]:
+                    # In standby: check for wake word
+                    has_wake, command = check_wake_word(transcription)
+                    if not has_wake:
+                        print(f"\033[1;33m[Standby Mode]:\033[0m Say 'Ezra' or tap ENTER to activate.")
+                        continue
+
+                    loop_state["is_awake"] = True
+                    loop_state["last_interaction_time"] = time.time()
+                    print(f"\033[1;32m[⚡ WAKE TRIGGERED]\033[0m Biometrics: {tier.upper()} ({score:.2f})")
+
+                    if command:
+                        turn_res = asyncio.run(handle_turn(command, speaker_tier=tier))
+                        loop_state["last_interaction_time"] = time.time()
+                        if isinstance(turn_res, dict) and not turn_res.get("should_continue", True):
+                            loop_state["is_awake"] = False
+                    else:
+                        has_ar = bool(re.search(r"[\u0600-\u06FF]", transcription))
+                        greet = "أهلاً بك يا سيدي، في خدمتك دائماً." if has_ar else "Good day, sir. At your command."
+                        voice_speaker.speak(greet, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
+                else:
+                    # Currently awake (Active 3-minute dwell mode)
+                    loop_state["last_interaction_time"] = time.time()
+
+                    # Check if user just said 'Ezra' to check liveness
+                    has_wake, command = check_wake_word(transcription)
+                    actual_query = command if (has_wake and command) else transcription
+
+                    if has_wake and not command:
+                        voice_speaker.speak("Right beside you, sir.", prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
+                        continue
+
+                    turn_res = asyncio.run(handle_turn(actual_query, speaker_tier=tier))
+                    loop_state["last_interaction_time"] = time.time()
+                    should_continue = turn_res.get("should_continue", True) if isinstance(turn_res, dict) else turn_res
+                    if not should_continue:
+                        loop_state["is_awake"] = False
+
+            except Exception as loop_err:
+                status_bar.clear()
+                print(f"\033[1;31m[Turn recovery]: {loop_err}\033[0m")
 
     except KeyboardInterrupt:
         print("\n\033[1;33m[Conversation paused. Press ENTER to resume.]\033[0m\n")
