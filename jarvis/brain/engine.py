@@ -2,7 +2,7 @@ import os
 import json
 import re
 import asyncio
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import aiohttp
 from config.settings import GEMINI_API_KEY, GROQ_API_KEY
 from jarvis.actions.browser import BrowserManager
@@ -114,12 +114,61 @@ class BrainEngine:
         except Exception as e:
             return json.dumps({"status": "error", "message": str(e)})
 
+    def _quick_conversational_reflex(self, msg: str) -> Optional[str]:
+        """Instant conversational reflex: replies in <1ms without LLM thinking for routine interaction."""
+        import random
+        m = msg.strip().lower()
+        # Clean punctuation
+        m_clean = re.sub(r"[^\w\s]", "", m).strip()
+
+        # Greetings
+        if m_clean in ("hi", "hello", "hey", "hey ezra", "hello ezra", "hi ezra", "morning", "good morning"):
+            return random.choice([
+                "Good day, sir. At your command.",
+                "Right here, sir. How can I assist?",
+                "Hello, sir. Standing by."
+            ])
+
+        # Status / liveness checks
+        if m_clean in ("are you there", "you there", "ezra", "can you hear me", "you listening"):
+            return random.choice([
+                "Loud and clear, sir.",
+                "Always, sir. Ready when you are.",
+                "Right beside you, sir."
+            ])
+
+        # Acknowledgements
+        if m_clean in ("thank you", "thanks", "thanks ezra", "thank you ezra", "cheers"):
+            return random.choice([
+                "My absolute pleasure, sir.",
+                "Anytime, sir.",
+                "Quite happy to help."
+            ])
+
+        if m_clean in ("okay", "ok", "cool", "nice", "great", "alright", "perfect"):
+            return random.choice([
+                "Splendid.",
+                "Understood, sir.",
+                "Standing by."
+            ])
+
+        if m_clean in ("how are you", "how are you doing", "how are things"):
+            return "Operating at peak performance, sir. Ready for your instructions."
+
+        return None
+
     async def think(self, user_message: str) -> Dict[str, Any]:
-        """Main LLM reasoning loop with fallback mechanisms and persistent memory."""
+        """Main LLM reasoning loop with instant reflexes and fast fallback."""
         self.reload_keys()
 
         # Save user query to persistent memory
         memory_service.save_message("user", user_message)
+
+        # 0. Instant Reflex Path (<1ms latency for natural conversational banter!)
+        quick_reply = self._quick_conversational_reflex(user_message)
+        if quick_reply:
+            memory_service.save_message("ezra", quick_reply, [])
+            return {"speech_text": quick_reply, "tool_calls": []}
 
         # Build context from learned facts
         facts = memory_service.get_all_facts()
