@@ -43,7 +43,7 @@ class BrainEngine:
         self.gemini_key = settings.GEMINI_API_KEY
         self.groq_key = settings.GROQ_API_KEY
 
-    async def execute_tool(self, tool_name: str, args: Dict[str, Any]) -> str:
+    async def execute_tool(self, tool_name: str, args: Dict[str, Any], user_context: str = "") -> str:
         """Executes system or desktop action."""
         try:
             if tool_name == "inspect_screen":
@@ -52,9 +52,11 @@ class BrainEngine:
             elif tool_name == "click_screen_element":
                 res = screen_vision.locate_and_click(args.get("description", ""))
             elif tool_name == "type_message":
-                res = AppManager.type_message(args.get("text", ""), args.get("press_enter", False))
+                text = args.get("text", "") or args.get("message", "") or user_context
+                res = AppManager.type_message(text, args.get("press_enter", False))
             elif tool_name == "dictate_text":
-                res = AppManager.dictate_text(args.get("text", ""), args.get("press_enter", False))
+                text = args.get("text", "") or args.get("message", "") or user_context
+                res = AppManager.dictate_text(text, args.get("press_enter", False))
             elif tool_name == "press_key":
                 res = AppManager.press_key(args.get("key", "enter"))
             elif tool_name == "press_hotkey":
@@ -65,13 +67,15 @@ class BrainEngine:
                 status_str = "unmuted and will speak aloud" if enabled else "muted in silent text mode"
                 res = {"status": "success", "message": f"My voice is now {status_str}, sir."}
             elif tool_name == "get_weather":
-                res = api_manager.get_weather(args.get("city", ""))
+                city = args.get("city", "") or args.get("location", "")
+                res = api_manager.get_weather(city)
             elif tool_name == "get_crypto_price":
                 res = api_manager.get_crypto_price(args.get("coins", "bitcoin,ethereum"), args.get("currency", "usd"))
             elif tool_name == "get_exchange_rate":
                 res = api_manager.get_exchange_rate(args.get("base_currency", "USD"), args.get("target_currency", "EUR"))
             elif tool_name == "search_wikipedia":
-                res = api_manager.search_wikipedia(args.get("query", ""))
+                query = args.get("query", "") or args.get("q", "") or args.get("topic", "") or user_context
+                res = api_manager.search_wikipedia(query)
             elif tool_name == "get_network_info":
                 res = api_manager.get_network_info()
             elif tool_name == "get_tech_news":
@@ -79,15 +83,20 @@ class BrainEngine:
             elif tool_name == "get_github_info":
                 res = api_manager.get_github_info(args.get("username", "AhmadAlshrafe25"), args.get("repo", ""))
             elif tool_name == "open_tab":
-                res = BrowserManager.open_url(args.get("url", ""))
+                url = args.get("url", "") or args.get("link", "")
+                res = BrowserManager.open_url(url)
             elif tool_name == "search_web":
-                res = BrowserManager.search_web(args.get("query", ""), args.get("engine", "google"))
+                query = args.get("query") or args.get("q") or args.get("search") or args.get("search_query") or args.get("keyword") or user_context.strip()
+                res = BrowserManager.search_web(query, args.get("engine", "google"))
             elif tool_name == "play_youtube":
-                res = BrowserManager.play_youtube_video_or_music(args.get("query", ""))
+                query = args.get("query", "") or args.get("q", "") or args.get("song", "") or args.get("video", "") or user_context.strip()
+                res = BrowserManager.play_youtube_video_or_music(query)
             elif tool_name == "launch_app":
-                res = AppManager.launch_app(args.get("app_name", ""))
+                app_name = args.get("app_name") or args.get("app") or args.get("name") or args.get("application") or ""
+                res = AppManager.launch_app(app_name)
             elif tool_name == "close_app":
-                res = AppManager.close_app(args.get("app_name", ""))
+                app_name = args.get("app_name") or args.get("app") or args.get("name") or args.get("application") or ""
+                res = AppManager.close_app(app_name)
             elif tool_name == "send_discord_message":
                 res = AppManager.send_discord_message(args.get("message", ""))
             elif tool_name == "take_screenshot":
@@ -265,7 +274,7 @@ class BrainEngine:
                 data = await resp.json()
                 if "candidates" in data:
                     reply_text = data["candidates"][0]["content"]["parts"][0]["text"]
-                    return await self._process_tool_calls_in_text(reply_text)
+                    return await self._process_tool_calls_in_text(reply_text, user_context=user_message)
                 else:
                     raise Exception(f"Gemini API returned error: {data}")
 
@@ -285,11 +294,11 @@ class BrainEngine:
                 data = await resp.json()
                 if "choices" in data:
                     reply_text = data["choices"][0]["message"]["content"]
-                    return await self._process_tool_calls_in_text(reply_text)
+                    return await self._process_tool_calls_in_text(reply_text, user_context=user_message)
                 else:
                     raise Exception(f"Groq API returned error: {data}")
 
-    async def _process_tool_calls_in_text(self, reply_text: str) -> Dict[str, Any]:
+    async def _process_tool_calls_in_text(self, reply_text: str, user_context: str = "") -> Dict[str, Any]:
         pattern = r"```tool_call\s*(.*?)\s*```"
         matches = re.findall(pattern, reply_text, re.DOTALL)
         
@@ -297,7 +306,7 @@ class BrainEngine:
         for match in matches:
             try:
                 call_data = json.loads(match.strip())
-                res = await self.execute_tool(call_data["tool"], call_data.get("args", {}))
+                res = await self.execute_tool(call_data["tool"], call_data.get("args", {}), user_context=user_context)
                 tool_results.append({"tool": call_data["tool"], "result": json.loads(res)})
             except Exception as e:
                 tool_results.append({"error": str(e)})

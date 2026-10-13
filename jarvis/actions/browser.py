@@ -74,15 +74,18 @@ class BrowserManager:
 
     @staticmethod
     def search_web(query: str, engine: str = "google") -> dict:
-        encoded = urllib.parse.quote_plus(query)
+        clean_q = query.strip()
+        if not clean_q:
+            return {"status": "error", "message": "No search query provided."}
+        encoded = urllib.parse.quote_plus(clean_q)
         if engine.lower() == "youtube":
-            url = BrowserManager._resolve_first_youtube_video(query)
+            url = BrowserManager._resolve_first_youtube_video(clean_q)
         elif engine.lower() == "wikipedia":
             url = f"https://en.wikipedia.org/wiki/Special:Search?search={encoded}"
         else:
             url = f"https://www.google.com/search?q={encoded}"
         BrowserManager._launch_url_reliably(url)
-        return {"status": "success", "message": f"Searching {engine} for '{query}'."}
+        return {"status": "success", "message": f"Searching {engine} for '{clean_q}'."}
 
     @staticmethod
     def play_youtube_video_or_music(query: str) -> dict:

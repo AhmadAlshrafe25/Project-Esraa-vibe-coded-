@@ -259,6 +259,8 @@ class NativeSpeechRecognizer:
         t = text.strip()
         # Homophone corrections: Israel / Isra / Esra / Asra / Azra -> Ezra
         t = re.sub(r"\b(israel|isra|asra|esra|azra|ezrah)\b", "Ezra", t, flags=re.IGNORECASE)
+        # Antigravity homophones: antique gravity / anti gravity / the gravity -> antigravity
+        t = re.sub(r"\b(antique gravity|anti gravity|the gravity)\b", "antigravity", t, flags=re.IGNORECASE)
         # Arabic phonetic Ezra:
         t = re.sub(r"\b(عزرة|إسراء|اسراء|اسرا|عزرائيل)\b", "عزرا", t)
         # Fix colloquial "in it" -> "innit"

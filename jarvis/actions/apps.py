@@ -17,16 +17,22 @@ FLATPAK_APPS = {
 }
 
 NATIVE_APPS = {
-    "terminal": ["gnome-terminal", "konsole", "xfce4-terminal", "xterm"],
+    "antigravity": ["/home/blackcrow/Downloads/Antigravity/Antigravity-x64/antigravity", "antigravity"],
+    "antique gravity": ["/home/blackcrow/Downloads/Antigravity/Antigravity-x64/antigravity", "antigravity"],
+    "the gravity": ["/home/blackcrow/Downloads/Antigravity/Antigravity-x64/antigravity", "antigravity"],
+    "gravity": ["/home/blackcrow/Downloads/Antigravity/Antigravity-x64/antigravity", "antigravity"],
+    "terminal": ["cosmic-term", "gnome-terminal", "konsole", "xfce4-terminal", "xterm"],
     "calculator": ["gnome-calculator", "kcalc", "xcalc"],
-    "files": ["nautilus", "dolphin", "thunar", "pcmanfm"],
+    "files": ["cosmic-files", "nautilus", "dolphin", "thunar", "pcmanfm"],
     "chrome": ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium"],
     "firefox": ["firefox"],
+    "brave": ["com.brave.Browser", "brave-browser", "brave"],
     "vlc": ["vlc"],
-    "vscode": ["code"],
+    "vscode": ["code", "com.microsoft.VSCode"],
+    "code": ["code", "com.microsoft.VSCode"],
     "spotify": ["spotify"],
-    "settings": ["gnome-control-center", "systemsettings"],
-    "text_editor": ["gedit", "kate", "xed", "mousepad", "nano"]
+    "settings": ["cosmic-settings", "gnome-control-center", "systemsettings"],
+    "text_editor": ["cosmic-edit", "gedit", "kate", "xed", "mousepad", "nano"]
 }
 
 class AppManager:
@@ -35,6 +41,21 @@ class AppManager:
     @staticmethod
     def launch_app(app_name: str) -> dict:
         app_clean = app_name.lower().strip()
+
+        # 0. Check direct Antigravity shortcuts
+        if any(g in app_clean for g in ("antigravity", "gravity")):
+            antigravity_bin = Path.home() / "Downloads" / "Antigravity" / "Antigravity-x64" / "antigravity"
+            if antigravity_bin.exists():
+                try:
+                    subprocess.Popen(
+                        [str(antigravity_bin)],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True
+                    )
+                    return {"status": "success", "message": "Launched Antigravity IDE."}
+                except Exception as e:
+                    return {"status": "error", "message": f"Failed to launch Antigravity: {e}"}
 
         # 1. Check Flatpak applications
         if app_clean in FLATPAK_APPS:
@@ -50,10 +71,10 @@ class AppManager:
             except Exception as e:
                 return {"status": "error", "message": f"Failed to launch Flatpak {flatpak_id}: {e}"}
 
-        # 2. Check native predefined aliases
+        # 2. Check native predefined aliases or direct executable binaries
         binary_candidates = NATIVE_APPS.get(app_clean, [app_clean])
         for binary in binary_candidates:
-            if shutil.which(binary):
+            if shutil.which(binary) or (os.path.exists(binary) and os.access(binary, os.X_OK)):
                 try:
                     subprocess.Popen(
                         [binary],
