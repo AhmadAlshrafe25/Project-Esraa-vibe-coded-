@@ -118,7 +118,8 @@ class MemoryManager:
 
     async def auto_learn_from_interaction(self, user_text: str, reply_text: str):
         """Asynchronously reflects on conversation to automatically extract corrections, habits, and preferences."""
-        gemini_key = os.getenv("GEMINI_API_KEY", "")
+        raw_key = os.getenv("GEMINI_API_KEY", "") or GEMINI_API_KEY or ""
+        gemini_key = raw_key.split(",")[0].strip() if raw_key else ""
         if not gemini_key or len(user_text.strip()) < 4:
             return
 

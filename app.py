@@ -150,9 +150,16 @@ def continuous_conversation_loop():
             SystemManager.send_desktop_notification("⚡ Project Ezra Activated", "Laptop open: Standing by and listening.", urgency="normal")
         except Exception:
             pass
+        # Gate wake greeting playback: do NOT collide with active user speech
+        if getattr(stt_engine, "is_user_speaking", False):
+            return
+
         has_arabic = bool(getattr(voice_speaker, "last_language", "en") == "ar")
         greet = "أهلاً بك يا سيدي، الأنظمة جاهزة ومستعدة." if has_arabic else "Welcome back, sir. Systems operational and listening."
         voice_speaker.speak(greet, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
+        # Drain microphone buffer after greeting so greeting acoustic residue is never recorded
+        if hasattr(stt_engine, "worker") and stt_engine.worker:
+            stt_engine.worker.drain(keep_recent=0)
 
     # Initialize zero-overhead hardware Lid & Wake monitor
     from jarvis.actions.lid_monitor import LidWakeMonitor

@@ -41,7 +41,7 @@ class ScreenVision:
 
     @staticmethod
     def get_api_keys() -> List[str]:
-        raw = GEMINI_API_KEY or os.getenv("GEMINI_API_KEY", "")
+        raw = os.getenv("GEMINI_API_KEY", "") or GEMINI_API_KEY or ""
         return [k.strip() for k in raw.split(",") if k.strip()]
 
     @staticmethod
@@ -70,7 +70,8 @@ class ScreenVision:
         import google.genai as genai
 
         for api_key in keys:
-            client = genai.Client(api_key=api_key)
+            active_key = api_key.split(",")[0].strip()
+            client = genai.Client(api_key=active_key)
             for model_name in CANDIDATE_VISION_MODELS:
                 try:
                     resp = client.models.generate_content(

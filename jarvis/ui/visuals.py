@@ -131,8 +131,9 @@ class StatusBar:
             idx = 0
             while not self._thinking_event.is_set():
                 bar = bars[idx % len(bars)]
-                sys.stdout.write(f"\r\033[1;33m[⚡ Thinking   {bar} ({label})]\033[0m\033[K")
-                sys.stdout.flush()
+                with self._lock:
+                    sys.stdout.write(f"\r\033[1;33m[⚡ Thinking   {bar} ({label})]\033[0m\033[K")
+                    sys.stdout.flush()
                 idx += 1
                 time.sleep(0.08)
 
@@ -145,8 +146,9 @@ class StatusBar:
             self._thinking_event.set()
             self._thinking_thread.join(timeout=0.2)
             self._thinking_thread = None
-        sys.stdout.write("\r\033[K")
-        sys.stdout.flush()
+        with self._lock:
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
 
     def start_speaking(self, phrase_snippet: str = ""):
         """Displays active speaking status bar."""
@@ -167,8 +169,9 @@ class StatusBar:
             disp = phrase_snippet[:35] if phrase_snippet else "Ezra active"
             while not self._speaking_event.is_set():
                 wave_str = waves[idx % len(waves)]
-                sys.stdout.write(f"\r\033[1;35m[🔊 Speaking   {wave_str} ({disp}...)]\033[0m\033[K")
-                sys.stdout.flush()
+                with self._lock:
+                    sys.stdout.write(f"\r\033[1;35m[🔊 Speaking   {wave_str} ({disp}...)]\033[0m\033[K")
+                    sys.stdout.flush()
                 idx += 1
                 time.sleep(0.10)
 
@@ -181,23 +184,26 @@ class StatusBar:
             self._speaking_event.set()
             self._speaking_thread.join(timeout=0.2)
             self._speaking_thread = None
-        sys.stdout.write("\r\033[K")
-        sys.stdout.flush()
+        with self._lock:
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
 
     def render_listening(self, level: int = 0, is_heard: bool = False):
         """Renders live mic status bar with instant responsiveness."""
         clamped = max(0, min(10, level))
         meter_bar = "█" * clamped + "░" * (10 - clamped)
-        if is_heard:
-            sys.stdout.write(f"\r\033[1;32m[🎙️ Heard You  |{meter_bar}| (Capturing voice...)]\033[0m\033[K")
-        else:
-            sys.stdout.write(f"\r\033[1;36m[🎙️ Mic Live   |{meter_bar}| (Speak freely)]\033[0m\033[K")
-        sys.stdout.flush()
+        with self._lock:
+            if is_heard:
+                sys.stdout.write(f"\r\033[1;32m[🎙️ Heard You  |{meter_bar}| (Capturing voice...)]\033[0m\033[K")
+            else:
+                sys.stdout.write(f"\r\033[1;36m[🎙️ Mic Live   |{meter_bar}| (Speak freely)]\033[0m\033[K")
+            sys.stdout.flush()
 
     def clear(self):
         self.stop_all()
-        sys.stdout.write("\r\033[K")
-        sys.stdout.flush()
+        with self._lock:
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
 
     def stop_all(self):
         if self._thinking_thread and self._thinking_thread.is_alive():

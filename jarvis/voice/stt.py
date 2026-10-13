@@ -339,24 +339,52 @@ class NativeSpeechRecognizer:
         pre_buffer = deque(maxlen=4)  # 320ms pre-speech ring buffer
         recorded_frames = []
         is_speaking = False
+        self.is_user_speaking = False
         consecutive_voice_chunks = 0
         speech_chunks_count = 0
         silence_chunks = 0
         max_silence_chunks = max(3, int(silence_threshold_sec / self.chunk_duration))  # ~3-4 chunks = 240-320ms fast endpointing
 
         start_time = time.time()
+        last_chunk_time = start_time
         speech_start_time = 0.0
         max_speech_sec = 8.0  # Cap maximum continuous utterance to 8s so it never hangs
 
         try:
             while True:
+                # Acoustic Echo Protection: If Ezra is speaking aloud, drain buffer and discard pre-buffer
+                try:
+                    from jarvis.voice.speaker import voice_speaker
+                    if getattr(voice_speaker, "is_speaking", False):
+                        pre_buffer.clear()
+                        recorded_frames.clear()
+                        is_speaking = False
+                        self.is_user_speaking = False
+                        consecutive_voice_chunks = 0
+                        speech_chunks_count = 0
+                        start_time = time.time()
+                        last_chunk_time = start_time
+                        time.sleep(0.02)
+                        continue
+                except Exception:
+                    pass
+
                 item = self.worker.get_chunk()
                 if item is None:
                     time.sleep(0.01)
-                    if not is_speaking and (time.time() - start_time > max_wait_sec):
+                    now = time.time()
+                    if not is_speaking and (now - start_time > max_wait_sec):
                         break
+                    if is_speaking:
+                        # Global speech duration guard
+                        if speech_start_time and (now - speech_start_time > max_speech_sec):
+                            break
+                        # Stalled chunk timeout: if audio capture worker stalls for >1.2s after speaking begins, exit loop cleanly
+                        if now - last_chunk_time > 1.2:
+                            break
                     continue
 
+                last_chunk_time = time.time()
                 chunk, ac_rms = item
                 baseline = min(self.worker.ambient_baseline, 180.0)
                 # Sensitive vocal threshold cleanly above room / headset acoustics
@@ -371,6 +399,7 @@ class NativeSpeechRecognizer:
                     consecutive_voice_chunks += 1
                     if consecutive_voice_chunks >= 2 and not is_speaking:
                         is_speaking = True
+                        self.is_user_speaking = True
                         speech_start_time = time.time()
                         recorded_frames.extend(list(pre_buffer))
 
@@ -416,6 +445,7 @@ class NativeSpeechRecognizer:
                     pass
 
         finally:
+            self.is_user_speaking = False
             status_bar.clear()
 
         # Noise Rejection Filter: If user spoke less than 2 chunks (<0.16s), discard

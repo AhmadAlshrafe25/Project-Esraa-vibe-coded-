@@ -58,13 +58,35 @@ Environment=XDG_CURRENT_DESKTOP=$XDG_CURRENT_DESKTOP
 WantedBy=default.target
 EOF
 
-# 3. Setup XDG Desktop Autostart Directory (KDE Plasma & GNOME / COSMIC)
+# 3. Reload and Enable Systemd Service
+echo "[+] Configuring systemd user service..."
+SYSTEMD_ENABLED=0
+if command -v systemctl >/dev/null 2>&1; then
+    if systemctl --user daemon-reload 2>/dev/null && systemctl --user enable ezra.service 2>/dev/null; then
+        SYSTEMD_ENABLED=1
+        echo "[+] Systemd user service successfully enabled!"
+        if systemctl --user is-active --quiet ezra.service 2>/dev/null; then
+            echo "[+] Restarting active Ezra service with new lid-wake core..."
+            systemctl --user restart ezra.service || true
+        else
+            echo "[+] Starting Ezra service now..."
+            systemctl --user start ezra.service || true
+        fi
+    fi
+fi
+
+# 4. Autostart Deduplication & XDG Desktop Fallback
+# If Systemd user service is enabled, remove or avoid duplicate XDG autostart entry to prevent concurrent instances
 AUTOSTART_DIR="$HOME/.config/autostart"
 mkdir -p "$AUTOSTART_DIR"
 DESKTOP_AUTOSTART="$AUTOSTART_DIR/project-ezra.desktop"
 
-echo "[+] Creating XDG autostart entry at: $DESKTOP_AUTOSTART"
-cat <<EOF > "$DESKTOP_AUTOSTART"
+if [ "$SYSTEMD_ENABLED" -eq 1 ]; then
+    echo "[+] Systemd user service is managing autostart. Removing redundant XDG desktop entry to prevent competing instances..."
+    rm -f "$DESKTOP_AUTOSTART"
+else
+    echo "[+] Systemd user service not available. Configuring XDG desktop autostart entry at: $DESKTOP_AUTOSTART"
+    cat <<EOF > "$DESKTOP_AUTOSTART"
 [Desktop Entry]
 Version=1.0
 Type=Application
@@ -79,21 +101,7 @@ StartupNotify=false
 X-GNOME-Autostart-enabled=true
 X-KDE-autostart-after=panel
 EOF
-
-chmod +x "$DESKTOP_AUTOSTART"
-
-# 4. Reload and Enable Systemd Service
-echo "[+] Enabling systemd user service..."
-systemctl --user daemon-reload
-systemctl --user enable ezra.service
-
-# If not running in a headless container, start or restart the service
-if systemctl --user is-active --quiet ezra.service 2>/dev/null; then
-    echo "[+] Restarting active Ezra service with new lid-wake core..."
-    systemctl --user restart ezra.service
-else
-    echo "[+] Starting Ezra service now..."
-    systemctl --user start ezra.service || true
+    chmod +x "$DESKTOP_AUTOSTART"
 fi
 
 # 5. Check if user has sudo for systemd sleep hook (optional extra redundancy)

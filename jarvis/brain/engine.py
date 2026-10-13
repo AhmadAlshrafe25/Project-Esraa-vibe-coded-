@@ -533,7 +533,7 @@ class BrainEngine:
         if direct_action:
             reply_speech = direct_action.get("speech_text", "")
             memory_service.save_message("ezra", reply_speech, direct_action.get("tool_calls", []))
-            asyncio.create_task(memory_service.auto_learn_from_interaction(user_message, reply_speech))
+            # Reserve background memory learning for substantive conversational turns to prevent quota exhaustion
             return direct_action
 
         # Build context from learned facts
@@ -592,6 +592,8 @@ class BrainEngine:
 
     async def _call_gemini(self, user_message: str, system_prompt: str, speaker_tier: str = "verified") -> Dict[str, Any]:
         candidate_models = [
+            "gemini-flash-lite-latest",
+            "gemini-3.5-flash-lite",
             "gemini-3.8-flash",
             "gemini-flash-latest",
             "gemini-3.7-flash",
@@ -650,7 +652,7 @@ class BrainEngine:
                                     if reply_text:
                                         return await self._process_tool_calls_in_text(reply_text, user_context=user_message, speaker_tier=speaker_tier)
                             elif resp.status == 429:
-                                break  # Daily quota reached for this key; rotate immediately to next key!
+                                continue  # Model quota cap reached; rotate to next candidate model!
                             elif resp.status in (404, 400, 500, 503):
                                 continue
                     except Exception:
@@ -668,14 +670,25 @@ class BrainEngine:
             "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant"
         ]
+
+        recent = memory_service.get_recent_history(8)
+        history_messages = []
+        for h in recent[:-1]:  # Exclude current message
+            sender = h.get("sender", "user")
+            role = "assistant" if sender in ("ezra", "model", "assistant") else "user"
+            msg_txt = (h.get("message") or "").strip()
+            if msg_txt:
+                history_messages.append({"role": role, "content": msg_txt})
+
+        messages = [{"role": "system", "content": system_prompt}] + history_messages + [
+            {"role": "user", "content": user_message.strip()}
+        ]
+
         async with aiohttp.ClientSession() as session:
             for model in models:
                 payload = {
                     "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_message}
-                    ],
+                    "messages": messages,
                     "temperature": 0.5,
                     "max_tokens": 800
                 }
@@ -695,9 +708,18 @@ class BrainEngine:
         ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
         model = os.getenv("OLLAMA_MODEL", "llama3.2")
 
+        recent = memory_service.get_recent_history(8)
+        history_lines = []
+        for h in recent[:-1]:
+            sender = "Ezra" if h.get("sender") in ("ezra", "model", "assistant") else "User"
+            msg_txt = (h.get("message") or "").strip()
+            if msg_txt:
+                history_lines.append(f"{sender}: {msg_txt}")
+
+        history_block = ("\n".join(history_lines) + "\n\n") if history_lines else ""
         payload = {
             "model": model,
-            "prompt": f"{system_prompt}\n\nUser: {user_message}\n\nEzra:",
+            "prompt": f"{system_prompt}\n\n{history_block}User: {user_message}\n\nEzra:",
             "stream": False,
             "options": {
                 "temperature": 0.5,
@@ -795,10 +817,11 @@ class BrainEngine:
             except Exception as e:
                 tool_results.append({"tool": call_data.get("tool", "unknown"), "error": str(e)})
 
-        # Clean raw JSON and code blocks from speech text
+        # Clean raw JSON, tool calls, and code blocks from speech text so Ezra never reads curly braces aloud
         clean_text = re.sub(r'```(?:tool_call|json)?[\s\S]*?```', '', reply_text)
+        clean_text = re.sub(r'```[\s\S]*?```', '', clean_text)
         while True:
-            m = re.search(r'\{\s*"tool"\s*:', clean_text)
+            m = re.search(r'\{\s*["\']?(?:tool|name|action)["\']?\s*:', clean_text)
             if not m:
                 break
             start = m.start()
@@ -815,7 +838,18 @@ class BrainEngine:
             if end != -1:
                 clean_text = clean_text[:start] + clean_text[end:]
             else:
+                clean_text = clean_text[:start]
                 break
+
+        # Remove any remaining raw JSON objects / curly brace structures
+        while True:
+            subbed = re.sub(r'\{[^{}]*\}', '', clean_text)
+            if subbed == clean_text:
+                break
+            clean_text = subbed
+
+        # Remove any lingering stray curly braces or unclosed tags
+        clean_text = re.sub(r'[{}]', '', clean_text)
         clean_text = clean_text.strip()
 
         tool_speech_items = []
@@ -946,8 +980,11 @@ class BrainEngine:
             r'mute|unmute|lower\s+(?:the\s+)?(?:sound|volume)|turn\s+down|turn\s+up|set\s+(?:the\s+)?(?:sound|volume)|'
             r'pause\s+music|resume\s+music|stop\s+music|next\s+(?:song|track)|skip\s+song|'
             r'search|google|prompt|tell|ask|'
-            r'روحي\s+على|ركزي\s+على|افتح|شغل|اغلق|سكر|اكتبي|اطبعي|اشري|حرك|انقري|اضغطي|دبل\s+كليك|رايت\s+كليك|'
-            r'اسحب|اضغطي\s+انتر|صور|اقفل|اكتم|علي\s+الصوت|وطي\s+الصوت|ابحث)'
+            r'روحي\s+على|ركزي\s+على|افتح|افتحي|شغل|شغلي|اغلق|اغلقي|سكر|سكري|اكتبي|اطبعي|اشري|حرك|انقري|اضغطي|دبل\s+كليك|رايت\s+كليك|'
+            r'اسحب|اضغطي\s+انتر|صور|اقفل|اكتم|علي\s+الصوت|ارفع\s+الصوت|وطي\s+الصوت|اخفض\s+الصوت|وطي|علي|ابحث)'
+        )
+        AR_ATTACHED_VERBS = (
+            r'(?:افتح|افتحي|شغل|شغلي|اغلق|اغلقي|سكر|سكري|اكتبي|اطبعي|اشري|حرك|انقري|اضغطي|اسحب|صور|اقفل|اكتم|علي|ارفع|وطي|اخفض|ابحث|روحي|ركزي)'
         )
 
         raw_splits = re.split(r'(?:[;,]|\s+(?:and\s+then|then|after\s+that|afterwards|ثم|بعدين|وبعدين|وكمان)\s+)', clean_text)
@@ -956,7 +993,7 @@ class BrainEngine:
             chunk = chunk.strip()
             if not chunk:
                 continue
-            sub_pattern = rf'\s+(?:and\s+(?:also\s+)?|also\s+|plus\s+|&\s+|و\s*كمان\s+|و\s*)(?={ACTION_VERBS}\b)'
+            sub_pattern = rf'\s+(?:and\s+(?:also\s+)?|also\s+|plus\s+|&\s+|و\s*كمان\s+|و\s+)(?={ACTION_VERBS}\b)|\s+(?=و{AR_ATTACHED_VERBS}\b)'
             sub_chunks = re.split(sub_pattern, chunk)
             merged = []
             i = 0
@@ -965,12 +1002,15 @@ class BrainEngine:
                 if not current:
                     i += 1
                     continue
+                # Strip leading attached Arabic "و" if present before an action verb (e.g. "وسكري" -> "سكري", "ووطي" -> "وطي")
+                current = re.sub(rf'^و(?={AR_ATTACHED_VERBS}\b)', '', current).strip()
                 if i + 1 < len(sub_chunks):
                     nxt = sub_chunks[i+1].strip()
+                    nxt_stripped = re.sub(rf'^و(?={AR_ATTACHED_VERBS}\b)', '', nxt).strip()
                     is_type = any(w in current for w in ('type', 'write', 'dictate', 'pipe', 'اكتبي', 'اطبعي', 'terminal', 'ترمينال'))
-                    is_enter = any(e in nxt for e in ('hit enter', 'press enter', 'send enter', 'with enter', 'then enter', 'اضغطي انتر', 'انتر'))
+                    is_enter = any(e in nxt_stripped for e in ('hit enter', 'press enter', 'send enter', 'with enter', 'then enter', 'اضغطي انتر', 'انتر'))
                     if is_type and is_enter:
-                        merged.append(f'{current} {nxt}')
+                        merged.append(f'{current} {nxt_stripped}')
                         i += 2
                         continue
                 merged.append(current)
@@ -983,9 +1023,9 @@ class BrainEngine:
         detected_actions = []
 
         for p in parts:
-            # 1. Volume & Audio Levels (e.g. "lower the sound to 50%", "make volume 30%", "sound at 70")
+            # 1. Volume & Audio Levels (e.g. "lower the sound to 50%", "make volume 30%", "sound at 70", "وطي الصوت لـ 30")
             m_vol = (
-                re.search(r'(?:lower|reduce|turn\s+down|turn\s+up|set|put|make|وطي|اخفض|علي|ارفع|حط|خلي)?\s*(?:the\s+)?(?:sound|volume|audio|الصوت)\s*(?:to|at|on|لـ?|على)?\s*(\d+)\s*%?', p)
+                re.search(r'(?:lower|reduce|turn\s+down|turn\s+up|set|put|make|وطي|اخفض|اخفضي|علي|ارفع|ارفعي|حط|حطي|خلي|خليها)?\s*(?:the\s+)?(?:sound|volume|audio|الصوت)\s*(?:to|at|on|لـ?|على)?\s*(\d+)\s*%?', p)
                 or re.search(r'(?:sound|volume|الصوت)\s*(\d+)\s*%?', p)
             )
             if m_vol:
@@ -993,19 +1033,51 @@ class BrainEngine:
                 detected_actions.append(("set_volume", {"percent": pct}, f"Volume set to {pct}%"))
                 continue
 
-            if any(w in p for w in ("volume up", "louder", "turn it up", "علي الصوت", "ارفع الصوت")):
+            if any(w in p for w in ("volume up", "louder", "turn it up", "علي الصوت", "ارفع الصوت", "ارفعي الصوت")):
                 detected_actions.append(("set_volume", {"percent": 85}, "Turned the volume up"))
                 continue
 
-            if any(w in p for w in ("volume down", "quieter", "turn it down", "وطي الصوت", "اخفض الصوت")):
+            if any(w in p for w in ("volume down", "quieter", "turn it down", "وطي الصوت", "اخفض الصوت", "اخفضي الصوت")):
                 detected_actions.append(("set_volume", {"percent": 35}, "Turned the volume down"))
                 continue
 
-            if any(w in p for w in ("mute volume", "mute sound", "mute pc", "mute laptop", "mute", "اكتم الصوت", "ميوت")):
+            if any(w in p for w in ("mute volume", "mute sound", "mute pc", "mute laptop", "mute", "اكتم الصوت", "اكتمي الصوت", "ميوت")):
                 detected_actions.append(("set_volume", {"percent": 0}, "Master audio muted"))
                 continue
 
-            # 2. Antigravity Prompt Bridge
+            # 2. Launch Application (Evaluated BEFORE Antigravity prompt matching so "Ezra open Antigravity" launches the app)
+            m_launch = re.search(
+                r'^(?:open(?:\s+up)?|launch|start|run|شغل|شغلي|افتح|افتحي)\s+'
+                r'(?:a\s+|an\s+|the\s+)?(?:application|app|برنامج|تطبيق)?\s*'
+                r'([a-zA-Z0-9_\-\.\+\u0600-\u06FF]+(?:\s+[a-zA-Z0-9_\-\.\+\u0600-\u06FF]+)*?)'
+                r'(?:\s+(?:terminal|browser|editor|window|app|application|برنامج|تطبيق))?$',
+                p
+            )
+            if m_launch:
+                app_t = m_launch.group(1).strip()
+                media_or_special = (
+                    "the", "this", "tab", "browser", "folder", "downloads", "documents",
+                    "youtube", "song", "music", "video", "track", "movie",
+                    "أغنية", "اغنية", "موسيقى", "فيديو", "يوتيوب", "تراك", "مقطع"
+                )
+                if app_t not in media_or_special and not any(app_t.startswith(mw + " ") for mw in ("song", "music", "video", "أغنية", "اغنية", "فيديو", "مقطع", "ألبوم", "البوم")):
+                    detected_actions.append(("launch_app", {"app_name": app_t}, f"Launching {app_t}"))
+                    continue
+
+            # 3. Close Application (Evaluated BEFORE Antigravity prompt matching so "close Antigravity" kills the app)
+            m_close = re.search(
+                r'^(?:close|kill|exit|quit|terminate|سكر|سكري|اغلق|اغلقي|وقفي|اطفي)\s+'
+                r'(?:application|app|برنامج|تطبيق)?\s*'
+                r'([a-zA-Z0-9_\-\.\+\u0600-\u06FF]+(?:\s+[a-zA-Z0-9_\-\.\+\u0600-\u06FF]+)*?)$',
+                p
+            )
+            if m_close:
+                app_t = m_close.group(1).strip()
+                if app_t not in ("the", "this", "tab", "browser", "window", "التاب", "المتصفح", "النافذة"):
+                    detected_actions.append(("close_app", {"app_name": app_t}, f"Closed {app_t}"))
+                    continue
+
+            # 4. Antigravity Prompt Bridge (Evaluated AFTER Launch & Close so "open antigravity" launches rather than prompts)
             if any(w in p for w in ("antigravity", "anti-gravity", "antique gravity", "انتي جرافيتي", "انتيجرافيتي")):
                 p_text = re.sub(r'^(?:write\s+(?:this\s+)?prompt\s+to|prompt|tell|ask|اكتبي\s+لـ|ابعتي\s+لـ|ارسلي\s+لـ)\s*(?:anti-?gravity|انتي\s*جرافيتي)?\s*(?:to|that|with|انه|انو)?\s*:?\s*', '', p).strip()
                 if not p_text:
@@ -1013,7 +1085,7 @@ class BrainEngine:
                 detected_actions.append(("prompt_antigravity", {"prompt": p_text}, f"Prompting Antigravity"))
                 continue
 
-            # 3. Application Prompting Bridge ("prompt discord <text>", "tell <app> to <text>")
+            # 5. Application Prompting Bridge ("prompt discord <text>", "tell <app> to <text>")
             m_bridge = re.search(r'^(?:tell|ask|prompt|write\s+to|type\s+into)\s+([a-zA-Z0-9_\-\.\+]+)\s*:?\s*(.+)$', p)
             if m_bridge:
                 t_app = m_bridge.group(1).strip()
@@ -1022,14 +1094,15 @@ class BrainEngine:
                     detected_actions.append(("prompt_app", {"app_name": t_app, "text": t_txt, "press_enter": True}, f"Sent to {t_app}"))
                     continue
 
-            # 4. YouTube & Media Playback
+            # 6. YouTube & Media Playback (Refined to distinguish launch app from media playback)
             is_music = (
-                any(w in p for w in ("leave her johnny", "shanty", "soundtrack", "song", "music", "youtube", "track", "أغنية", "اغنية", "شغل", "يوتيوب", "watch", "video", "trailer", "movie"))
+                any(w in p for w in ("leave her johnny", "shanty", "soundtrack", "song", "music", "youtube", "track", "أغنية", "اغنية", "يوتيوب", "watch", "video", "trailer", "movie", "موسيقى", "فيديو", "تراك"))
                 or p.startswith("play ") or p.startswith("listen to ") or p.startswith("put on ") or p.startswith("watch ")
+                or any(p.startswith(w) for w in ("شغل اغنية ", "شغل أغنية ", "شغل فيديو ", "شغل يوتيوب ", "شغل مقطع ", "شغل تراك ", "شغل موسيقى ", "شغلي اغنية ", "شغلي أغنية ", "شغلي فيديو ", "شغلي يوتيوب "))
                 or ("everything great about" in p)
             )
             if is_music:
-                clean_s = re.sub(r'^(?:can\s+you\s+)?(?:play|start|listen\s+to|put\s+on|stream|watch|open|search\s+(?:for\s+)?|شغل|حط|افتح)\s*(?:the\s+)?(?:song|music|video|track|movie|أغنية|اغنية)?\s*', '', p, flags=re.IGNORECASE).strip()
+                clean_s = re.sub(r'^(?:can\s+you\s+)?(?:play|start|listen\s+to|put\s+on|stream|watch|open|search\s+(?:for\s+)?|شغل|شغلي|حط|حطي|افتح|افتحي)\s*(?:the\s+)?(?:song|music|video|track|movie|أغنية|اغنية|موسيقى|فيديو|تراك)?\s*', '', p, flags=re.IGNORECASE).strip()
                 clean_s = re.sub(r'\s*(?:on\s+youtube|from\s+youtube|in\s+youtube|باليوتيوب|على\s+اليوتيوب)$', '', clean_s, flags=re.IGNORECASE).strip()
                 if clean_s:
                     detected_actions.append(("play_youtube", {"query": clean_s}, f"Starting \"{clean_s}\" on YouTube"))
@@ -1210,23 +1283,7 @@ class BrainEngine:
                     detected_actions.append(("press_key", {"key": "space"}, "Pressed Space"))
                     continue
 
-            # 13. Launch Application
-            m_launch = re.search(r'^(?:open(?:\s+up)?|launch|start|run|شغل|افتح)\s+(?:a\s+|an\s+|the\s+)?(?:application|app|برنامج|تطبيق)?\s*([a-zA-Z0-9_\-\.\+]+)(?:\s+(?:terminal|browser|editor|window|app|application))?$', p)
-            if m_launch:
-                app_t = m_launch.group(1).strip()
-                if app_t not in ("the", "this", "tab", "browser", "folder", "downloads", "documents", "youtube"):
-                    detected_actions.append(("launch_app", {"app_name": app_t}, f"Launching {app_t}"))
-                    continue
-
-            # 14. Close Application
-            m_close = re.search(r'^(?:close|kill|exit|quit|terminate|سكر|اغلق)\s+(?:application|app|برنامج|تطبيق)?\s*([a-zA-Z0-9_\-\.\+]+)$', p)
-            if m_close:
-                app_t = m_close.group(1).strip()
-                if app_t not in ("the", "this", "tab", "browser", "window"):
-                    detected_actions.append(("close_app", {"app_name": app_t}, f"Closed {app_t}"))
-                    continue
-
-            # 15. Browser Tabs
+            # Browser Tabs
             if any(w in p for w in ("close tab", "close the tab", "سكر التاب", "اغلق التاب")):
                 detected_actions.append(("close_tab", {}, "Closed browser tab"))
                 continue
@@ -1264,12 +1321,14 @@ class BrainEngine:
                 detected_actions.append(("get_system_status", {}, "Checked system vitals"))
                 continue
 
-            # 19. Web Search
-            m_search = re.search(r'^(?:search\s+(?:the\s+web\s+)?for|google\s+for|search|google|ابحث\s+عن)\s+(.+)$', p)
+            # Web Search
+            m_search = re.search(r'^(?:search\s+(?:the\s+web\s+)?(?:for\s+)?|google\s+(?:for\s+)?|ابحث\s+(?:في\s+قوقل\s+)?عن\s+)(.+)$', p)
             if m_search:
                 q_s = m_search.group(1).strip()
-                detected_actions.append(("search_web", {"query": q_s, "engine": "google"}, f"Searching Google for '{q_s}'"))
-                continue
+                q_s = re.sub(r'^(?:for|about|on)\s+', '', q_s).strip()
+                if q_s:
+                    detected_actions.append(("search_web", {"query": q_s, "engine": "google"}, f"Searching Google for '{q_s}'"))
+                    continue
 
 
         # If one or more semantic actions were detected, execute all of them!

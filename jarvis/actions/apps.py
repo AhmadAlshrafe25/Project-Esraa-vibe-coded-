@@ -544,6 +544,25 @@ EDITOR_CLASSES = [
     "code", "vscode", "vscodium", "cursor", "kate", "gedit", "sublime_text", "atom", "xed"
 ]
 
+ARABIC_APP_MAP = {
+    "الآلة الحاسبة": "calculator",
+    "الحاسبة": "calculator",
+    "حاسبة": "calculator",
+    "آلة حاسبة": "calculator",
+    "المتصفح": "browser",
+    "متصفح": "browser",
+    "الترمينال": "terminal",
+    "ترمينال": "terminal",
+    "المفكرة": "text_editor",
+    "مفكرة": "text_editor",
+    "الملفات": "files",
+    "ملفات": "files",
+    "انتي جرافيتي": "antigravity",
+    "انتيجرافيتي": "antigravity",
+    "كروم": "chrome",
+    "فايرفوكس": "firefox",
+}
+
 
 def focus_window_by_pattern(pattern: str, pick_other: bool = False) -> bool:
     """Activates and raises a window matching the pattern across KDE Plasma 6/5, GNOME, X11, Wayland.
@@ -554,6 +573,9 @@ def focus_window_by_pattern(pattern: str, pick_other: bool = False) -> bool:
     focused = False
 
     targets = [p_lower]
+    if p_lower in ARABIC_APP_MAP:
+        targets.append(ARABIC_APP_MAP[p_lower])
+
     if p_lower in ("terminal", "term", "console", "shell", "bash", "zsh", "ترمينال", "الترمينال"):
         targets.extend(TERMINAL_CLASSES)
     elif p_lower in ("browser", "web", "internet", "متصفح"):
@@ -737,7 +759,7 @@ NATIVE_APPS = {
     "the gravity": _ag_candidates,
     "gravity": _ag_candidates,
     "terminal": ["kitty", "alacritty", "cosmic-term", "gnome-terminal", "konsole", "xfce4-terminal", "foot", "wezterm", "xterm"],
-    "calculator": ["gnome-calculator", "kcalc", "xcalc"],
+    "calculator": ["gnome-calculator", "kcalc", "xcalc", "galculator", "speedcrunch", "calc"],
     "files": ["cosmic-files", "nautilus", "dolphin", "thunar", "pcmanfm"],
     "chrome": ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium"],
     "firefox": ["firefox"],
@@ -768,6 +790,8 @@ class AppManager:
     def launch_app(app_name: str) -> dict:
         """Launches or brings up an application by name."""
         app_clean = app_name.lower().strip()
+        if app_clean in ARABIC_APP_MAP:
+            app_clean = ARABIC_APP_MAP[app_clean]
 
         # 0. Check direct Antigravity shortcuts
         if any(g in app_clean for g in ("antigravity", "anti-gravity", "antique gravity", "gravity")):
@@ -898,6 +922,13 @@ class AppManager:
         # 1. Bring Antigravity to foreground
         AppManager.focus_app("antigravity")
         time.sleep(0.35)
+
+        # 1.5. Focus chat input bar (Ctrl+L) so prompt pastes into chat rather than code editor
+        try:
+            pyautogui.hotkey('ctrl', 'l')
+            time.sleep(0.12)
+        except Exception:
+            pass
 
         # 2. Stage prompt into multi-distro clipboard
         copied = set_clipboard(clean_prompt)
