@@ -93,6 +93,27 @@ class TestAudioDSPAndNoiseFiltering(unittest.TestCase):
         self.assertLess(clap_density, 0.15)
         self.assertLess(diffuse_density, 0.15)
 
+    def test_sustained_speech_does_not_degrade_or_attenuate(self):
+        """Speech sustained over 2+ seconds must NOT be corrupted or attenuated by adaptive noise filter."""
+        fs = self.sample_rate
+        # Calibrate noise profile with quiet room noise
+        for _ in range(6):
+            self.dsp.filter_chunk(np.random.randn(self.chunk_samples).astype(np.float32) * 25.0, is_speech=False)
+
+        # 25 chunks (~2 seconds) of human speech: 150 Hz + harmonics
+        t = np.arange(self.chunk_samples) / fs
+        voice = (600.0 * np.sin(2 * np.pi * 150 * t) + 400.0 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
+
+        rms_history = []
+        for _ in range(25):
+            _, rms, _ = self.dsp.filter_chunk(voice, is_speech=False)
+            rms_history.append(rms)
+
+        # First chunk and 25th chunk must preserve speech energy without self-cancellation
+        self.assertGreater(rms_history[0], 400.0)
+        self.assertGreater(rms_history[-1], rms_history[0] * 0.85, "Sustained speech must not be attenuated by noise filter.")
+
+
     def test_near_field_speech_energy_barrier_and_duration_check(self):
         """Speech activation must require energy crossing near-field barrier and minimum duration."""
         recognizer = NativeSpeechRecognizer.__new__(NativeSpeechRecognizer)
@@ -153,6 +174,9 @@ class TestAmbientAndTVRejection(unittest.IsolatedAsyncioTestCase):
             "don't forget to like and subscribe to the channel",
             "previously on the show",
             "touchdown on the replay",
+            "limited time offer call now",
+            "buy now for only ninety nine",
+            "final score on the broadcast",
             "اشترك في القناة وفعل الجرس",
             "نشرة الأخبار اليوم",
             "فاصل ونواصل",
@@ -174,10 +198,14 @@ class TestAmbientAndTVRejection(unittest.IsolatedAsyncioTestCase):
             "did you do your homework",
             "dinner is ready come eat",
             "stop fighting give me that",
+            "give it back leave me alone",
+            "it's my turn to play",
             "look what i drew",
             "يا ماما وين الأكل",
             "تعال هون شو بتعمل",
             "بدنا نتغدا هلا",
+            "دوري هلا هات اللعبة",
+            "سيبني ابعد عني",
         ]
         for phrase in household_phrases:
             self.assertTrue(
@@ -293,6 +321,38 @@ class TestSpeakerBiometricsNearFieldGating(unittest.TestCase):
 
         # Kid voice should not be verified as adult master
         self.assertNotEqual(tier_kid, TIER_VERIFIED)
+
+    def test_verify_turn_rejects_kids_above_350hz(self):
+        """Kid voices with fundamental pitch above 350 Hz (e.g. 360-400 Hz) must be detected and rejected."""
+        fs = 16000
+        t = np.arange(fs * 0.8) / fs
+
+        # Enroll master with adult pitch (120 Hz)
+        adult_pcm = (900 * np.sin(2 * np.pi * 120 * t) + 400 * np.sin(2 * np.pi * 240 * t)).astype(np.int16).tobytes()
+        self.biometrics.enroll(pcm_data=adult_pcm, user_name="Ahmad")
+
+        # Child voice at 360 Hz
+        child_pcm = (850 * np.sin(2 * np.pi * 360 * t) + 400 * np.sin(2 * np.pi * 720 * t)).astype(np.int16).tobytes()
+        f0_detected = VoiceBiometrics.extract_f0_pitch(child_pcm)
+        self.assertGreaterEqual(f0_detected, 340.0, "F0 must be correctly extracted above 340 Hz")
+
+        tier_child, _, detail_child = self.biometrics.verify_turn(child_pcm)
+        self.assertEqual(tier_child, TIER_GUEST)
+        self.assertIn("pitch_mismatch", detail_child)
+
+    def test_far_field_rejected_even_if_secret_word_spoken(self):
+        """Distant background audio failing near-field barrier must NOT be verified, even if secret word is heard."""
+        fs = 16000
+        t = np.arange(fs * 0.8) / fs
+        # Far-field sound with RMS ~90
+        far_pcm = (90 * np.sin(2 * np.pi * 200 * t)).astype(np.int16).tobytes()
+
+        self.biometrics.set_secret_word("protocol zero")
+        tier, score, detail = self.biometrics.verify_turn(far_pcm, "user said protocol zero on TV")
+
+        self.assertEqual(tier, TIER_GUEST)
+        self.assertIn("distant_background_voice", detail)
+
 
 
 if __name__ == "__main__":

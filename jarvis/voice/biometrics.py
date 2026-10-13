@@ -194,7 +194,7 @@ class VoiceBiometrics:
             frame_len = int(sample_rate * 0.04)
             step = int(sample_rate * 0.02)
             pitches = []
-            min_lag = int(sample_rate / 350)
+            min_lag = int(sample_rate / 480)
             max_lag = int(sample_rate / 65)
 
             for i in range(0, len(samples) - frame_len, step * 2):
@@ -213,7 +213,7 @@ class VoiceBiometrics:
                         peak_idx = min_lag + np.argmax(search_slice)
                         if corr[peak_idx] > 0.35 * corr[0]:
                             pitch_hz = sample_rate / peak_idx
-                            if 70.0 <= pitch_hz <= 320.0:
+                            if 70.0 <= pitch_hz <= 450.0:
                                 pitches.append(pitch_hz)
 
             if pitches:
@@ -300,11 +300,11 @@ class VoiceBiometrics:
             low_energy = float(np.sum(fft_mag[low_mask] ** 2))
             proximity_ratio = low_energy / total_energy
 
-            rms_factor = min(1.0, max(0.0, (ac_rms - 140.0) / 220.0))
+            rms_ratio = min(1.0, max(0.0, ac_rms / 250.0))
             crest_factor_norm = min(1.0, max(0.0, (crest_factor - 1.8) / 2.0))
             prox_factor = min(1.0, max(0.0, proximity_ratio * 3.5))
 
-            near_field_score = float(0.55 * rms_factor + 0.25 * crest_factor_norm + 0.20 * prox_factor)
+            near_field_score = float((0.55 * rms_ratio + 0.25 * crest_factor_norm + 0.20 * prox_factor) * rms_ratio)
 
             # Strict physical gate: distant voices arriving < 220 RMS are rejected as far-field
             is_near = (ac_rms >= 220.0 and near_field_score >= 0.28) or (ac_rms >= 350.0)
@@ -343,6 +343,12 @@ class VoiceBiometrics:
             self.last_score = 1.0
             return TIER_VERIFIED, 1.0, "biometrics_not_enrolled"
 
+        # Reject far-field background voices (TV across the room, kids shouting)
+        if not is_nf:
+            self.last_score = min(0.18, nf_score)
+            self.last_tier = TIER_GUEST
+            return TIER_GUEST, self.last_score, f"distant_background_voice (near_field_failed, rms: {nf_metrics.get('rms', 0.0):.1f})"
+
         # Check if an active secret confirmation session is alive (<10 mins)
         now = time.time()
         if self.secret_session_until > now:
@@ -354,12 +360,6 @@ class VoiceBiometrics:
             self.secret_session_until = now + 600.0  # 10 minutes session!
             self.last_tier = TIER_VERIFIED
             return TIER_VERIFIED, 0.95, "secret_word_authenticated"
-
-        # Reject far-field background voices (TV across the room, kids shouting)
-        if not is_nf:
-            self.last_score = min(0.18, nf_score)
-            self.last_tier = TIER_GUEST
-            return TIER_GUEST, self.last_score, f"distant_background_voice (near_field_failed, rms: {nf_metrics.get('rms', 0.0):.1f})"
 
         # Extract acoustic embedding from current utterance
         embedding = self.extract_acoustic_embedding(pcm_data) if pcm_data else np.zeros(48, dtype=np.float32)

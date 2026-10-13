@@ -535,8 +535,8 @@ class BrainEngine:
                 "reason": "ambient_chatter"
             }
 
-        # Guest speaker filtering when not directed at Ezra
-        if speaker_tier == "guest":
+        # Guest/unsure speaker filtering when not directed at Ezra
+        if speaker_tier in ("guest", "unsure"):
             m_low = user_message.lower().strip()
             has_wake = bool(re.search(r"\b(ezra|israel|esra|asra|azra|ezrah|عزرا|إسراء|اسراء|عزرائيل)\b", m_low))
             if not has_wake:
@@ -544,7 +544,7 @@ class BrainEngine:
                     "speech_text": "",
                     "tool_calls": [],
                     "rejected": True,
-                    "reason": "guest_speaker_unaddressed"
+                    "reason": f"{speaker_tier}_speaker_unaddressed"
                 }
 
         # Save user query to persistent memory

@@ -69,7 +69,7 @@ class AudioDSPFilter:
 
     def calc_harmonic_density(self, samples_or_bytes) -> float:
         """
-        Calculates normalized autocorrelation peak in the pitch lag range [75 Hz, 350 Hz].
+        Calculates normalized autocorrelation peak in the pitch lag range [75 Hz, 450 Hz].
         Returns value in [0.0, 1.0]. Human vocal phonation is >= 0.20, whereas claps/noise are < 0.15.
         """
         if isinstance(samples_or_bytes, bytes):
@@ -94,7 +94,7 @@ class AudioDSPFilter:
             return 0.0
         r_norm = r / r[0]
 
-        min_lag = int(self.sample_rate / 350)
+        min_lag = int(self.sample_rate / 450)
         max_lag = int(self.sample_rate / 75)
         if max_lag < len(r_norm):
             return float(np.max(r_norm[min_lag:max_lag]))
@@ -103,6 +103,7 @@ class AudioDSPFilter:
     def filter_chunk(self, arr: np.ndarray, is_speech: bool = False) -> tuple:
         """
         Processes a float32 chunk:
+        - Intelligent VAD: protects speech formants from polluting stationary noise profile.
         - Subtracts stationary background noise spectrum.
         - Applies 85 Hz to 3500 Hz bandpass filter.
         - Applies spectral noise gate during quiet periods.
@@ -117,10 +118,20 @@ class AudioDSPFilter:
         mag = np.abs(X)
         phase = np.angle(X)
 
-        if not is_speech and self.noise_calibrated:
-            self.update_noise(mag, alpha=0.03)
-        elif not self.noise_calibrated:
-            self.update_noise(mag, alpha=0.2)
+        rms_raw = float(np.sqrt(np.mean(arr ** 2)))
+        noise_rms = float(np.sqrt(np.mean((self.noise_profile * self.bp_mask) ** 2))) if self.noise_calibrated else 50.0
+        hd_raw = self.calc_harmonic_density(arr)
+
+        # Intelligent Voice Activity Detection for Stationary Noise Floor Tracking:
+        # Stationary noise estimation MUST NEVER be updated with speech formants or loud transients,
+        # otherwise speech is subtracted from itself and suppressed!
+        is_chunk_speech = is_speech or (self.noise_calibrated and (hd_raw >= 0.16 or rms_raw > noise_rms * 1.35))
+
+        if not is_chunk_speech:
+            if not self.noise_calibrated:
+                self.update_noise(mag, alpha=0.2)
+            else:
+                self.update_noise(mag, alpha=0.03)
 
         # Spectral subtraction: remove stationary ambient noise
         sub_mag = np.maximum(mag - self.oversubtraction * self.noise_profile, self.spectral_floor * mag)
@@ -128,9 +139,7 @@ class AudioDSPFilter:
         bp_mag = sub_mag * self.bp_mask
 
         # Spectral noise gating during non-speech periods to clamp ambient reverberation
-        rms_raw = float(np.sqrt(np.mean(arr ** 2)))
-        noise_rms = float(np.sqrt(np.mean((self.noise_profile * self.bp_mask) ** 2))) if self.noise_calibrated else 50.0
-        if not is_speech and rms_raw < noise_rms * 1.35:
+        if not is_chunk_speech and rms_raw < noise_rms * 1.35:
             bp_mag = bp_mag * 0.35
 
         clean_X = bp_mag * np.exp(1j * phase)
@@ -412,9 +421,12 @@ class NativeSpeechRecognizer:
         household_markers = [
             r"\b(hey mom|hey dad|mommy|daddy|pass the salt|where are my shoes)\b",
             r"\b(did you do your homework|clean your room|dinner is ready|time for dinner)\b",
-            r"\b(can i have a snack|stop fighting|stop yelling|stop screaming|stop crying|stop doing that|give me that|look what i drew|brush your teeth)\b",
+            r"\b(can i have a snack|stop fighting|stop yelling|stop screaming|stop crying|stop doing that|give me that|give it back|look what i drew|brush your teeth)\b",
+            r"\b(it\'s my turn|not your turn|leave me alone|don\'t touch that|let\'s play|come play with me|look at me|tag you\'re it)\b",
+            r"\b(did you see that|did you see the email|are you on mute|can you hear me|can you see my screen|who are you talking to|what did you say)\b",
             r"\b(put on your shoes|are you leaving|see you tomorrow|see you later)\b",
-            r"\b(يا ماما|يا بابا|وين الأكل|تعال هون|شو بتعمل|بدنا نتغدا|شفت الأخبار|وين مفاتيحي|روح نام|يا ولد|اعطيني المي|يلا نتغدى)\b"
+            r"\b(يا ماما|يا بابا|وين الأكل|تعال هون|شو بتعمل|بدنا نتغدا|شفت الأخبار|وين مفاتيحي|روح نام|يا ولد|اعطيني المي|يلا نتغدى)\b",
+            r"\b(دوري|دورك|هات اللعبة|سيبني|ابعد عني|ما بدي|تعال نلعب|شوفني|بدي العب|شفت الإيميل|انت ميوت|سامعني|مع مين عم تحكي|شو حكيت|ولا شي)\b"
         ]
         if any(re.search(p, low) for p in household_markers):
             return True
@@ -424,9 +436,10 @@ class NativeSpeechRecognizer:
             r"\b(subscribe to|like and subscribe|notification bell|coming up next|stay tuned)\b",
             r"\b(we will be right back|we\'ll be right back|after these messages|commercial break)\b",
             r"\b(breaking news|live from|back to you in the studio|weather forecast|weather update)\b",
-            r"\b(previously on|season finale|in tonight\'s episode|new episode)\b",
-            r"\b(welcome back to the show|touchdown|halftime|sponsor|sponsored by)\b",
-            r"\b(اشترك في القناة|فاصل ونواصل|إلى اللقاء في الحلقة القادمة|نشرة الأخبار|أهلاً بكم مشاهدينا|عاجل|برعاية)\b"
+            r"\b(previously on|season finale|in tonight\'s episode|new episode|welcome to the stream)\b",
+            r"\b(welcome back to the show|touchdown|halftime|sponsor|sponsored by|buy now|call now|limited time offer)\b",
+            r"\b(final score|scores|kickoff|championship|super bowl|world cup|penalty kick)\b",
+            r"\b(اشترك في القناة|فاصل ونواصل|إلى اللقاء في الحلقة القادمة|نشرة الأخبار|أهلاً بكم مشاهدينا|عاجل|برعاية|تابعونا|في حلقة اليوم|تقرير خاص)\b"
         ]
         if any(re.search(p, low) for p in tv_markers):
             return True
@@ -453,6 +466,7 @@ class NativeSpeechRecognizer:
             "yeah", "yep", "nope", "nah", "uh huh", "mm hmm", "hmm yeah", "oh yeah", "yeah right",
             "right yeah", "haha", "hahaha", "hehe", "oh wow", "wow", "right right", "okay okay",
             "cool cool", "i see", "whatever", "no way", "you know", "you know what",
+            "yes yes", "sure sure", "fine fine", "aha", "mhm mhm",
             "ايوه", "اممم", "اه صح", "لا والله", "ماشي ماشي", "تمام تمام", "عادي يعني", "شو بعرفني", "يلا باي"
         }
         if low in filler_phrases:

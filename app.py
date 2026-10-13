@@ -220,8 +220,8 @@ def continuous_conversation_loop():
 
                 # In dwell mode: ignore guest or far-field voices if not addressed to Ezra
                 has_wake, wake_cmd = check_wake_word(transcription)
-                if loop_state["is_awake"] and tier == "guest" and not has_wake:
-                    print(f"\033[1;30m[Biometric Near-Field Gate]: Suppressed background voice: \"{transcription}\" ({detail})\033[0m")
+                if loop_state["is_awake"] and tier in ("guest", "unsure") and not has_wake:
+                    print(f"\033[1;30m[Biometric Near-Field Gate]: Suppressed unaddressed background voice: \"{transcription}\" ({detail})\033[0m")
                     continue
 
                 # Always display captured transcription so user has visual feedback
@@ -243,6 +243,11 @@ def continuous_conversation_loop():
                     # In standby: check for wake word
                     if not has_wake:
                         print(f"\033[1;33m[Standby Mode]:\033[0m Say 'Ezra' or tap ENTER to activate.")
+                        continue
+
+                    # Reject distant background or guest voices trying to wake Ezra from across the room
+                    if tier == "guest":
+                        print(f"\033[1;30m[Biometric Near-Field Gate]: Ignored wake word from background/guest source: \"{transcription}\" ({detail})\033[0m")
                         continue
 
                     loop_state["is_awake"] = True
