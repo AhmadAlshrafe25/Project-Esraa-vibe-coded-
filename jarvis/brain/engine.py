@@ -512,9 +512,40 @@ class BrainEngine:
 
         return None
 
+    def is_ambient_or_chatter(self, user_message: str) -> bool:
+        """
+        Detects if input is ambient room chatter, TV audio, or undirected mutterings.
+        """
+        if not user_message or not user_message.strip():
+            return True
+
+        from jarvis.voice.stt import NativeSpeechRecognizer
+        return NativeSpeechRecognizer.is_ambient_chatter(user_message)
+
     async def think(self, user_message: str, speaker_tier: str = "verified") -> Dict[str, Any]:
         """Main LLM reasoning loop with instant reflexes, biometric access gate, and fast fallback."""
         self.reload_keys()
+
+        # Ambient TV and background chatter rejection gate
+        if self.is_ambient_or_chatter(user_message):
+            return {
+                "speech_text": "",
+                "tool_calls": [],
+                "rejected": True,
+                "reason": "ambient_chatter"
+            }
+
+        # Guest speaker filtering when not directed at Ezra
+        if speaker_tier == "guest":
+            m_low = user_message.lower().strip()
+            has_wake = bool(re.search(r"\b(ezra|israel|esra|asra|azra|ezrah|عزرا|إسراء|اسراء|عزرائيل)\b", m_low))
+            if not has_wake:
+                return {
+                    "speech_text": "",
+                    "tool_calls": [],
+                    "rejected": True,
+                    "reason": "guest_speaker_unaddressed"
+                }
 
         # Save user query to persistent memory
         memory_service.save_message("user", user_message)

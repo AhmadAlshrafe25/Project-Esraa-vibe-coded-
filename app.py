@@ -58,6 +58,9 @@ async def handle_turn(text: str, speaker_tier: str = "verified") -> dict:
     reply_speech = response.get("speech_text", "")
     tools = response.get("tool_calls", [])
 
+    if response.get("rejected"):
+        return {"should_continue": True, "rejected": True, "was_interrupted": False}
+
     if tools:
         for t in tools:
             if "tool" in t:
@@ -66,7 +69,7 @@ async def handle_turn(text: str, speaker_tier: str = "verified") -> dict:
     # Speak the reply with live typewriter and barge-in support
     prefix = "\033[1;35m[Ezra (Silent)]:\033[0m " if voice_speaker.is_muted else "\033[1;36m[Ezra]:\033[0m "
     completed = voice_speaker.speak(reply_speech, prefix=prefix, live_print=True)
-    return {"should_continue": True, "was_interrupted": not completed}
+    return {"should_continue": True, "was_interrupted": not completed, "rejected": False}
 
 def run_voice_enrollment():
     """Interactive Voice Genetic Code Calibration."""
@@ -209,6 +212,18 @@ def continuous_conversation_loop():
                     # Ambient tick or empty sound
                     continue
 
+                # Ambient TV, broadcast, and non-directed room chatter filter
+                if stt_engine.is_ambient_chatter(transcription):
+                    # Do not refresh dwell interaction time on ambient chatter!
+                    print(f"\033[1;30m[Acoustic Filter]: Suppressed ambient chatter / TV dialogue: \"{transcription}\"\033[0m")
+                    continue
+
+                # In dwell mode: ignore guest or far-field voices if not addressed to Ezra
+                has_wake, wake_cmd = check_wake_word(transcription)
+                if loop_state["is_awake"] and tier == "guest" and not has_wake:
+                    print(f"\033[1;30m[Biometric Near-Field Gate]: Suppressed background voice: \"{transcription}\" ({detail})\033[0m")
+                    continue
+
                 # Always display captured transcription so user has visual feedback
                 print(f"\n\033[1;34m[Heard]:\033[0m \"{transcription}\" \033[1;30m(Tier: {tier})\033[0m")
 
@@ -226,7 +241,6 @@ def continuous_conversation_loop():
 
                 if not loop_state["is_awake"]:
                     # In standby: check for wake word
-                    has_wake, command = check_wake_word(transcription)
                     if not has_wake:
                         print(f"\033[1;33m[Standby Mode]:\033[0m Say 'Ezra' or tap ENTER to activate.")
                         continue
@@ -235,8 +249,8 @@ def continuous_conversation_loop():
                     loop_state["last_interaction_time"] = time.time()
                     print(f"\033[1;32m[⚡ WAKE TRIGGERED]\033[0m Biometrics: {tier.upper()} ({score:.2f})")
 
-                    if command:
-                        turn_res = asyncio.run(handle_turn(command, speaker_tier=tier))
+                    if wake_cmd:
+                        turn_res = asyncio.run(handle_turn(wake_cmd, speaker_tier=tier))
                         loop_state["last_interaction_time"] = time.time()
                         if isinstance(turn_res, dict) and not turn_res.get("should_continue", True):
                             loop_state["is_awake"] = False
@@ -248,19 +262,20 @@ def continuous_conversation_loop():
                         voice_speaker.speak(greet, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
                         print("\033[1;36m[🎙️ Ready for next command — Speak freely into your headset]\033[0m\n")
                 else:
-                    # Currently awake (Active 3-minute dwell mode)
-                    loop_state["last_interaction_time"] = time.time()
+                    # Currently awake (Active dwell mode)
+                    actual_query = wake_cmd if (has_wake and wake_cmd) else transcription
 
-                    # Check if user just said 'Ezra' to check liveness
-                    has_wake, command = check_wake_word(transcription)
-                    actual_query = command if (has_wake and command) else transcription
-
-                    if has_wake and not command:
+                    if has_wake and not wake_cmd:
+                        loop_state["last_interaction_time"] = time.time()
                         voice_speaker.speak("Right beside you, sir.", prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
                         print("\033[1;36m[🎙️ Ready for next command — Speak freely into your headset]\033[0m\n")
                         continue
 
                     turn_res = asyncio.run(handle_turn(actual_query, speaker_tier=tier))
+                    if isinstance(turn_res, dict) and turn_res.get("rejected"):
+                        # Dwell window does NOT refresh on rejected turn!
+                        continue
+
                     loop_state["last_interaction_time"] = time.time()
                     should_continue = turn_res.get("should_continue", True) if isinstance(turn_res, dict) else turn_res
                     if not should_continue:

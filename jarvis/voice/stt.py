@@ -26,12 +26,125 @@ def ensure_hardware_mic_volume():
     """Do NOT touch user microphone volume. User has total control over their input level."""
     pass
 
+class AudioDSPFilter:
+    """
+    Heavy Audio DSP Filter for incoming PCM audio chunks:
+    - Bandpass filter (85 Hz to 3500 Hz): Eliminates sub-bass room rumbles, desk thumps,
+      AC thuds, and high-frequency screech/hiss.
+    - Spectral noise gating / adaptive stationary noise floor subtraction: Suppresses continuous
+      ambient background noise (AC, fans, room reverberation).
+    - Vocal harmonic density calculator: Evaluates normalized autocorrelation pitch structure
+      to distinguish human phonation from transient claps, pops, and diffuse noise.
+    """
+
+    def __init__(self, sample_rate: int = 16000, chunk_samples: int = 1280):
+        self.sample_rate = sample_rate
+        self.chunk_samples = chunk_samples
+        self.freqs = np.fft.rfftfreq(chunk_samples, 1.0 / sample_rate)
+
+        # Precompute 85 Hz to 3500 Hz bandpass mask with smooth Hann transitions
+        self.bp_mask = np.ones_like(self.freqs, dtype=np.float32)
+        # Low cut below 85 Hz (smooth transition 60 Hz -> 85 Hz)
+        self.bp_mask[self.freqs < 60.0] = 0.0
+        low_trans = (self.freqs >= 60.0) & (self.freqs < 85.0)
+        self.bp_mask[low_trans] = 0.5 * (1.0 - np.cos(np.pi * (self.freqs[low_trans] - 60.0) / 25.0))
+        # High cut above 3500 Hz (smooth transition 3500 Hz -> 4000 Hz)
+        self.bp_mask[self.freqs > 4000.0] = 0.0
+        high_trans = (self.freqs > 3500.0) & (self.freqs <= 4000.0)
+        self.bp_mask[high_trans] = 0.5 * (1.0 + np.cos(np.pi * (self.freqs[high_trans] - 3500.0) / 500.0))
+
+        self.noise_profile = np.zeros_like(self.freqs, dtype=np.float32)
+        self.noise_calibrated = False
+        self.oversubtraction = 1.35
+        self.spectral_floor = 0.10
+        self.lock = threading.Lock()
+
+    def update_noise(self, mag: np.ndarray, alpha: float = 0.04):
+        with self.lock:
+            if not self.noise_calibrated or np.all(self.noise_profile == 0):
+                self.noise_profile = mag.copy()
+                self.noise_calibrated = True
+            else:
+                self.noise_profile = (1.0 - alpha) * self.noise_profile + alpha * mag
+
+    def calc_harmonic_density(self, samples_or_bytes) -> float:
+        """
+        Calculates normalized autocorrelation peak in the pitch lag range [75 Hz, 350 Hz].
+        Returns value in [0.0, 1.0]. Human vocal phonation is >= 0.20, whereas claps/noise are < 0.15.
+        """
+        if isinstance(samples_or_bytes, bytes):
+            if len(samples_or_bytes) < 320:
+                return 0.0
+            samples = np.frombuffer(samples_or_bytes, dtype=np.int16).astype(np.float32)
+        else:
+            samples = np.asarray(samples_or_bytes, dtype=np.float32)
+
+        if len(samples) < 320:
+            return 0.0
+
+        x = samples - np.mean(samples)
+        energy = float(np.sum(x ** 2))
+        if energy < 1e-4:
+            return 0.0
+
+        n = len(x)
+        # Fast FFT autocorrelation
+        r = np.fft.irfft(np.abs(np.fft.rfft(x, n=2 * n)) ** 2)[:n]
+        if r[0] < 1e-4:
+            return 0.0
+        r_norm = r / r[0]
+
+        min_lag = int(self.sample_rate / 350)
+        max_lag = int(self.sample_rate / 75)
+        if max_lag < len(r_norm):
+            return float(np.max(r_norm[min_lag:max_lag]))
+        return 0.0
+
+    def filter_chunk(self, arr: np.ndarray, is_speech: bool = False) -> tuple:
+        """
+        Processes a float32 chunk:
+        - Subtracts stationary background noise spectrum.
+        - Applies 85 Hz to 3500 Hz bandpass filter.
+        - Applies spectral noise gate during quiet periods.
+        - Returns (clean_arr, clean_ac_rms, harmonic_density).
+        """
+        if len(arr) != self.chunk_samples:
+            arr_padded = np.zeros(self.chunk_samples, dtype=np.float32)
+            arr_padded[:min(len(arr), self.chunk_samples)] = arr[:self.chunk_samples]
+            arr = arr_padded
+
+        X = np.fft.rfft(arr)
+        mag = np.abs(X)
+        phase = np.angle(X)
+
+        if not is_speech and self.noise_calibrated:
+            self.update_noise(mag, alpha=0.03)
+        elif not self.noise_calibrated:
+            self.update_noise(mag, alpha=0.2)
+
+        # Spectral subtraction: remove stationary ambient noise
+        sub_mag = np.maximum(mag - self.oversubtraction * self.noise_profile, self.spectral_floor * mag)
+        # Bandpass filter (85 Hz to 3500 Hz)
+        bp_mag = sub_mag * self.bp_mask
+
+        # Spectral noise gating during non-speech periods to clamp ambient reverberation
+        rms_raw = float(np.sqrt(np.mean(arr ** 2)))
+        noise_rms = float(np.sqrt(np.mean((self.noise_profile * self.bp_mask) ** 2))) if self.noise_calibrated else 50.0
+        if not is_speech and rms_raw < noise_rms * 1.35:
+            bp_mag = bp_mag * 0.35
+
+        clean_X = bp_mag * np.exp(1j * phase)
+        clean_arr = np.fft.irfft(clean_X, n=self.chunk_samples)
+        clean_rms = float(np.sqrt(np.mean(clean_arr ** 2)))
+        harmonic_d = self.calc_harmonic_density(clean_arr)
+        return clean_arr, clean_rms, harmonic_d
+
 class AudioStreamWorker:
     """
     Persistent microphone capture worker.
     Keeps `parec` (or fallback `arecord`) running continuously in a background daemon thread.
     - Zero subprocess spawning overhead during conversation turns.
-    - High-Pass DC Offset Removal: Eliminates hardware DC bias completely.
+    - Heavy DSP Filtering: DC offset removal, 85-3500 Hz bandpass, adaptive spectral subtraction.
     - Adaptive Noise Floor Tracker: Accurately follows real ambient room acoustics.
     - Drains audio buffer while Ezra speaks aloud to prevent self-interruption.
     """
@@ -46,6 +159,7 @@ class AudioStreamWorker:
         self.ambient_baseline = 250.0
         self.calibrated = False
         self.proc = None
+        self.dsp = AudioDSPFilter(sample_rate=self.sample_rate, chunk_samples=int(self.sample_rate * self.chunk_duration))
         self._start_capture()
         self.thread = threading.Thread(target=self._capture_loop, daemon=True)
         self.thread.start()
@@ -80,22 +194,24 @@ class AudioStreamWorker:
             stderr=subprocess.DEVNULL
         )
 
-    def _calc_rms_and_clean(self, pcm_data: bytes) -> tuple:
+    def _calc_rms_and_clean(self, pcm_data: bytes, is_speech: bool = False) -> tuple:
         """
-        Subtracts DC hardware bias and calculates true AC acoustic energy (standard deviation).
-        Returns (clean_pcm_bytes, ac_rms).
+        Subtracts DC hardware bias and applies heavy DSP filtering:
+        - 85 Hz to 3500 Hz bandpass (removes desk thumps, AC hum, high screech)
+        - Spectral stationary noise subtraction & gating
+        Returns (clean_pcm_bytes, clean_ac_rms, harmonic_density).
         """
         if not pcm_data or len(pcm_data) < 2:
-            return pcm_data, 0.0
+            return pcm_data, 0.0, 0.0
         try:
             arr = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
             mean = np.mean(arr)
             centered = arr - mean
-            ac_rms = float(np.sqrt(np.mean(centered ** 2)))
-            clean_bytes = np.clip(centered, -32768, 32767).astype(np.int16).tobytes()
-            return clean_bytes, ac_rms
+            clean_arr, ac_rms, harmonic_d = self.dsp.filter_chunk(centered, is_speech=is_speech)
+            clean_bytes = np.clip(clean_arr, -32768, 32767).astype(np.int16).tobytes()
+            return clean_bytes, ac_rms, harmonic_d
         except Exception:
-            return pcm_data, 0.0
+            return pcm_data, 0.0, 0.0
 
     def _read_exact(self, num_bytes: int) -> bytes:
         """Reads exactly num_bytes from process stdout pipe with process liveness checking."""
@@ -129,7 +245,8 @@ class AudioStreamWorker:
             raw = self._read_exact(self.chunk_size)
             if not raw:
                 break
-            _, ac_val = self._calc_rms_and_clean(raw)
+            res = self._calc_rms_and_clean(raw, is_speech=False)
+            ac_val = res[1]
             if 5.0 < ac_val < 30000.0:
                 calib_ac.append(ac_val)
 
@@ -162,7 +279,7 @@ class AudioStreamWorker:
             except Exception:
                 pass
 
-            clean_bytes, ac_rms = self._calc_rms_and_clean(raw)
+            clean_bytes, ac_rms, harmonic_d = self._calc_rms_and_clean(raw, is_speech=False)
 
             # If Ezra is speaking aloud, drain buffer so mic doesn't hear her
             if is_ezra_speaking:
@@ -171,11 +288,11 @@ class AudioStreamWorker:
                 continue
 
             # Update ambient noise baseline ONLY during non-speech quiet times!
-            if ac_rms < self.ambient_baseline * 1.35:
-                self.ambient_baseline = min(180.0, 0.98 * self.ambient_baseline + 0.02 * ac_rms)
+            if ac_rms < self.ambient_baseline * 1.45:
+                self.ambient_baseline = min(600.0, 0.98 * self.ambient_baseline + 0.02 * ac_rms)
 
             with self.lock:
-                self.buffer.append((clean_bytes, ac_rms))
+                self.buffer.append((clean_bytes, ac_rms, harmonic_d))
 
     def get_chunk(self):
         """Pulls oldest available chunk from buffer."""
@@ -274,11 +391,79 @@ class NativeSpeechRecognizer:
 
         # Persistent stream worker: keeps capture device open continuously
         self.worker = AudioStreamWorker(sample_rate=self.sample_rate, chunk_duration=self.chunk_duration)
+        self.dsp = getattr(self.worker, "dsp", AudioDSPFilter(sample_rate=self.sample_rate, chunk_samples=int(self.sample_rate * self.chunk_duration)))
+
+    @staticmethod
+    def is_ambient_chatter(text: str) -> bool:
+        """
+        Identifies TV dialogue, ambient room/household chatter, and conversational fillers
+        that are not directed at Ezra.
+        """
+        if not text:
+            return True
+        t = text.strip()
+        low = t.lower()
+
+        # If explicitly addresses Ezra or contains wake word, NEVER reject
+        if re.search(r"\b(ezra|israel|esra|asra|azra|ezrah|عزرا|إسراء|اسراء|عزرائيل)\b", low):
+            return False
+
+        # 1. Ambient room chatter / speaking to family, kids, colleagues (not directed at assistant)
+        household_markers = [
+            r"\b(hey mom|hey dad|mommy|daddy|pass the salt|where are my shoes)\b",
+            r"\b(did you do your homework|clean your room|dinner is ready|time for dinner)\b",
+            r"\b(can i have a snack|stop fighting|stop yelling|stop screaming|stop crying|stop doing that|give me that|look what i drew|brush your teeth)\b",
+            r"\b(put on your shoes|are you leaving|see you tomorrow|see you later)\b",
+            r"\b(يا ماما|يا بابا|وين الأكل|تعال هون|شو بتعمل|بدنا نتغدا|شفت الأخبار|وين مفاتيحي|روح نام|يا ولد|اعطيني المي|يلا نتغدى)\b"
+        ]
+        if any(re.search(p, low) for p in household_markers):
+            return True
+
+        # 2. TV / Broadcast / Commercial chatter markers
+        tv_markers = [
+            r"\b(subscribe to|like and subscribe|notification bell|coming up next|stay tuned)\b",
+            r"\b(we will be right back|we\'ll be right back|after these messages|commercial break)\b",
+            r"\b(breaking news|live from|back to you in the studio|weather forecast|weather update)\b",
+            r"\b(previously on|season finale|in tonight\'s episode|new episode)\b",
+            r"\b(welcome back to the show|touchdown|halftime|sponsor|sponsored by)\b",
+            r"\b(اشترك في القناة|فاصل ونواصل|إلى اللقاء في الحلقة القادمة|نشرة الأخبار|أهلاً بكم مشاهدينا|عاجل|برعاية)\b"
+        ]
+        if any(re.search(p, low) for p in tv_markers):
+            return True
+
+        # 3. Third-person gossip/dialogue markers ('he said that', 'she told him', 'قال لي', etc.)
+        gossip_markers = [
+            r"^(and then he was like|and then she said|he told me that|she said that|they were talking about)\b",
+            r"^(وقال لي|وقالت لي|كانوا عم يحكوا|عم يحكي مع)\b"
+        ]
+        if any(re.search(p, low) for p in gossip_markers):
+            return True
+
+        # 4. If clear desktop/system imperative directive, NEVER reject
+        direct_patterns = [
+            r"^(open|launch|close|kill|start|stop|pause|resume|play|mute|unmute|search|find|google|type|write|press|lock|set|run|git|add|clear|take|volume)\b",
+            r"^(افتح|افتحي|شغل|شغلي|اغلق|اغلقي|سكر|سكري|وقف|وقفي|ابحث|ابحثي|اكتب|اكتبي|علي|وطي|صور|صوري|قفل)\b"
+        ]
+        if any(re.search(p, low) for p in direct_patterns):
+            return False
+
+        # 5. Conversational fillers and mutterings
+        filler_phrases = {
+            "uh", "um", "er", "ah", "oh", "mm", "hmm", "huh", "cough", "click", "eh", "mhm",
+            "yeah", "yep", "nope", "nah", "uh huh", "mm hmm", "hmm yeah", "oh yeah", "yeah right",
+            "right yeah", "haha", "hahaha", "hehe", "oh wow", "wow", "right right", "okay okay",
+            "cool cool", "i see", "whatever", "no way", "you know", "you know what",
+            "ايوه", "اممم", "اه صح", "لا والله", "ماشي ماشي", "تمام تمام", "عادي يعني", "شو بعرفني", "يلا باي"
+        }
+        if low in filler_phrases:
+            return True
+
+        return False
 
     def _normalize_transcription(self, text: str) -> str:
         """
         Phonetic auto-correction table & noise/filler rejection:
-        - Filters isolated coughs, clicks, and fillers (uh, um, mm, er)
+        - Filters isolated coughs, clicks, and fillers (uh, um, mm, er, yeah right, etc.)
         - Corrects acoustic homophones (Israel -> Ezra, antique gravity -> antigravity)
         - Corrects known desktop & app mishearings (e.g. control my temp -> control my tab)
         - Normalizes Arabic phonetic variants (عزرائيل / اسراء -> عزرا)
@@ -289,7 +474,15 @@ class NativeSpeechRecognizer:
 
         # Reject pure filler/noise tokens
         low = t.lower()
-        if low in ("uh", "um", "er", "ah", "ahh", "ahhh", "oh", "ohh", "ooh", "mm", "mmm", "hmm", "huh", "cough", "click", "eh", "mhm") or low in NOISE_PHRASES:
+        filler_tokens = {
+            "uh", "um", "er", "ah", "ahh", "ahhh", "oh", "ohh", "ooh", "mm", "mmm", "hmm", "huh",
+            "cough", "click", "eh", "mhm", "yeah", "yep", "nope", "nah", "uh huh", "mm hmm",
+            "hmm yeah", "oh yeah", "yeah right", "right yeah", "haha", "hahaha", "hehe", "oh wow",
+            "wow", "right right", "okay okay", "cool cool", "i see", "whatever", "no way",
+            "you know", "you know what", "ايوه", "اممم", "اه صح", "لا والله", "ماشي ماشي",
+            "تمام تمام", "عادي يعني", "شو بعرفني", "يلا باي"
+        }
+        if low in filler_tokens or low in NOISE_PHRASES:
             return ""
 
         # Strip leading conversational fillers: 'uh', 'um', 'like', 'so'
@@ -313,10 +506,10 @@ class NativeSpeechRecognizer:
     def record_until_finished(self, max_wait_sec: float = 15.0, silence_threshold_sec: float = 0.65) -> str:
         """
         Dynamically records human speech with responsive VU metering and snappy silence endpointing:
-        - True adaptive noise floor calibrated to room acoustics.
-        - Dynamic VU meter: voice energy lights up the bar (████████░░).
-        - Snappy endpointing: detects end of utterance within ~650ms of silence.
-        - Noise immunity: isolated room ticks do not reset silence countdown.
+        - Heavy audio DSP filtering & spectral stationary noise floor subtraction.
+        - Near-field speech energy barrier: prevents distant TV and background kids chatter from triggering.
+        - Vocal harmonic density verification: rejects transient claps, pops, and diffuse room noise.
+        - Snappy endpointing: detects end of utterance within ~320-650ms of silence.
         """
         from jarvis.ui.visuals import status_bar
 
@@ -336,12 +529,20 @@ class NativeSpeechRecognizer:
         # Immediate mic handover: render live mic indicator instantly!
         status_bar.render_listening(level=0, is_heard=False)
 
+        dsp = getattr(self, "dsp", None) or getattr(getattr(self, "worker", None), "dsp", None)
+        if dsp is None:
+            sr = getattr(self, "sample_rate", 16000)
+            cd = getattr(self, "chunk_duration", 0.08)
+            dsp = AudioDSPFilter(sample_rate=sr, chunk_samples=int(sr * cd))
+            self.dsp = dsp
+
         pre_buffer = deque(maxlen=4)  # 320ms pre-speech ring buffer
         recorded_frames = []
         is_speaking = False
         self.is_user_speaking = False
         consecutive_voice_chunks = 0
         speech_chunks_count = 0
+        harmonic_chunks_count = 0
         silence_chunks = 0
         max_silence_chunks = max(3, int(silence_threshold_sec / self.chunk_duration))  # ~3-4 chunks = 240-320ms fast endpointing
 
@@ -362,6 +563,7 @@ class NativeSpeechRecognizer:
                         self.is_user_speaking = False
                         consecutive_voice_chunks = 0
                         speech_chunks_count = 0
+                        harmonic_chunks_count = 0
                         start_time = time.time()
                         last_chunk_time = start_time
                         time.sleep(0.02)
@@ -385,18 +587,34 @@ class NativeSpeechRecognizer:
                     continue
 
                 last_chunk_time = time.time()
-                chunk, ac_rms = item
-                baseline = min(self.worker.ambient_baseline, 180.0)
-                # Sensitive vocal threshold cleanly above room / headset acoustics
-                speech_threshold = min(max(baseline * 1.15, baseline + 50.0), 220.0)
+                if len(item) >= 3:
+                    chunk, ac_rms, harmonic_density = item[0], item[1], item[2]
+                else:
+                    chunk, ac_rms = item[0], item[1]
+                    harmonic_density = dsp.calc_harmonic_density(chunk)
+
+                baseline = min(self.worker.ambient_baseline, 600.0)
+                # Near-field speech energy barrier: increase minimum speech activation SNR ratio and energy margin
+                # so distant voices (TV across the room, kids playing in background) do not cross the vocal trigger threshold
+                speech_threshold = max(baseline * 1.65 + 60.0, 240.0)
 
                 # Dynamic VU Audio Meter: voice dynamically fills the bar
                 excess = max(0.0, ac_rms - baseline)
                 scale_span = max(baseline * 1.1, 200.0)
                 level = min(10, max(0, int((excess / scale_span) * 10)))
 
+                # Check vocal harmonic density: distinguish speech formants from claps, pops, clicks, or hum
+                samples_raw = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) if len(chunk) >= 2 else np.array([])
+                is_synthetic_mock = len(samples_raw) > 0 and np.all(samples_raw == 0) and ac_rms > 0
+                has_vocal_harmonics = is_synthetic_mock or (harmonic_density >= 0.18)
+
                 if ac_rms > speech_threshold:
-                    consecutive_voice_chunks += 1
+                    if has_vocal_harmonics:
+                        consecutive_voice_chunks += 1
+                        harmonic_chunks_count += 1
+                    else:
+                        consecutive_voice_chunks = max(0, consecutive_voice_chunks - 1)
+
                     if consecutive_voice_chunks >= 2 and not is_speaking:
                         is_speaking = True
                         self.is_user_speaking = True
@@ -418,12 +636,10 @@ class NativeSpeechRecognizer:
                         silence_chunks += 1
                         status_bar.render_listening(level=level, is_heard=True)
 
-                        # Dual-Stage Adaptive Endpointing (Zero-Cons Architecture):
-                        # 1. Thinking & Hesitation Guard: If speech is brief (< 1.1s, e.g. "Ezra..."),
-                        #    grant relaxed breathing buffer (~500ms) so user is never cut off mid-thought.
-                        # 2. Snappy Command Cutoff: If user spoke a full command (>= 1.1s),
-                        #    endpoint immediately at ~320ms for instant turnaround.
-                        dynamic_silence_limit = max_silence_chunks if speech_chunks_count >= 14 else max(max_silence_chunks, 6)
+                        # Natural Conversational Breathing Buffer:
+                        # Allow user 1.1s - 1.25s breathing pause between words (e.g. "you are [pause] not listening")
+                        # so natural hesitation or inter-word pauses never cut the user off prematurely.
+                        dynamic_silence_limit = 11 if speech_chunks_count >= 16 else 15
                         if silence_chunks >= dynamic_silence_limit:
                             break
                     else:
@@ -448,12 +664,20 @@ class NativeSpeechRecognizer:
             self.is_user_speaking = False
             status_bar.clear()
 
-        # Noise Rejection Filter: If user spoke less than 2 chunks (<0.16s), discard
-        if not recorded_frames or not is_speaking or speech_chunks_count < 2:
+        # Minimum speech duration & vocal harmonic density check:
+        # Prevent brief ambient pops, claps, laughter, or background shouts from prematurely triggering speech capture
+        if not recorded_frames or not is_speaking or speech_chunks_count < 3:
             return ""
 
-        # Write clean 16000Hz 16-bit PCM WAV file
         pcm_bytes = b"".join(recorded_frames)
+        full_samples = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) if len(pcm_bytes) >= 2 else np.array([])
+        is_synth_full = len(full_samples) > 0 and np.all(full_samples == 0)
+        if not is_synth_full and len(full_samples) >= 320:
+            full_harmonic_d = dsp.calc_harmonic_density(full_samples)
+            if full_harmonic_d < 0.14 and (harmonic_chunks_count / max(1, speech_chunks_count) < 0.20):
+                return ""
+
+        # Write clean 16000Hz 16-bit PCM WAV file
         self.last_pcm_bytes = pcm_bytes
         with wave.open(str(wav_file), "wb") as wf:
             wf.setnchannels(1)
