@@ -15,7 +15,21 @@ from collections import deque
 from pathlib import Path
 import speech_recognition as sr
 import numpy as np
-from config.settings import CACHE_DIR, GEMINI_API_KEY
+from config.settings import (
+    CACHE_DIR,
+    GEMINI_API_KEY,
+    END_SIL,
+    SHORT_SIL,
+    MAX_UTT,
+    MIN_SPEECH,
+    PRE_BUFFER_SEC,
+    SPEECH_LONG_THRESHOLD,
+    NEED_ON_IDLE,
+    NEED_ON_WORKING,
+    NEED_ON_GUEST,
+    ANSWER_ONLY_ON_WAKE,
+    PUSH_TO_TALK,
+)
 
 NOISE_PHRASES = {
     "<noise>", "[noise]", "(noise)", "noise", "<silence>", "[silence]", "silence",
@@ -290,14 +304,8 @@ class AudioStreamWorker:
 
             clean_bytes, ac_rms, harmonic_d = self._calc_rms_and_clean(raw, is_speech=False)
 
-            # If Ezra is speaking aloud, drain buffer so mic doesn't hear her
-            if is_ezra_speaking:
-                with self.lock:
-                    self.buffer.clear()
-                continue
-
-            # Update ambient noise baseline ONLY during non-speech quiet times!
-            if ac_rms < self.ambient_baseline * 1.45:
+            # Do NOT contaminate ambient noise floor baseline with Ezra's own speaker output
+            if not is_ezra_speaking and ac_rms < self.ambient_baseline * 1.45:
                 self.ambient_baseline = min(600.0, 0.98 * self.ambient_baseline + 0.02 * ac_rms)
 
             with self.lock:
@@ -517,28 +525,67 @@ class NativeSpeechRecognizer:
 
         return t.strip()
 
-    def record_until_finished(self, max_wait_sec: float = 15.0, silence_threshold_sec: float = 0.65) -> str:
+    def record_until_finished(
+        self,
+        max_wait_sec: float = 15.0,
+        silence_threshold_sec: float = None,
+        is_busy: bool = False,
+        speaker_tier: str = None,
+        push_to_talk: bool = None,
+        on_partial_transcript = None
+    ) -> str:
         """
-        Dynamically records human speech with responsive VU metering and snappy silence endpointing:
-        - Heavy audio DSP filtering & spectral stationary noise floor subtraction.
-        - Near-field speech energy barrier: prevents distant TV and background kids chatter from triggering.
-        - Vocal harmonic density verification: rejects transient claps, pops, and diffuse room noise.
-        - Snappy endpointing: detects end of utterance within ~320-650ms of silence.
+        Musa Turn-Taking & Voice Activity Detection (VAD) Architecture:
+        - END_SIL (1.6s): After speaking for >1.2s, wait for 1.6s of quiet before treating turn as finished.
+        - SHORT_SIL (0.9s): If speech duration <1.2s (e.g. 'yes', 'okay go'), wait 0.9s of quiet.
+        - MAX_UTT (60.0s): Longest single turn continuous utterance hard cap.
+        - MIN_SPEECH (0.35s): Audio shorter than 0.35s (coughs, clicks, claps) is treated as noise and discarded.
+        - PRE (0.40s): Ring buffer keeps 0.4s (5 chunks @ 80ms) prior to speech onset so first consonant is never cut.
+        - needOn: 0.15s sound needed to start a turn when idle or speaking, 0.30s while working, 0.20s for guests.
+        - Thresholds: Speech must be 3x to 6x above ambient baseline; silence means volume drops below 2x the speech-start baseline.
+        - Live Transcript Streaming: Refreshes every 1.8s (or 0.35s if Ezra is speaking simultaneously).
+        - Interruption & Volume Ducking: Immediately ducks speaker volume when user speaks, and cuts off reply when confirmed.
+        - Push-to-Talk (PTT): Hold key mode with zero silence timers.
         """
         from jarvis.ui.visuals import status_bar
+        from jarvis.voice.speaker import voice_speaker
 
         ensure_hardware_mic_volume()
         self.last_streaming_transcription = ""
         self.last_spk_vector = []
         wav_file = CACHE_DIR / f"mic_{uuid.uuid4().hex[:8]}.wav"
 
+        # Push-to-talk mode determination
+        is_ptt = PUSH_TO_TALK if push_to_talk is None else bool(push_to_talk)
+
+        # Dynamic silence thresholds (Musa spec)
+        if silence_threshold_sec is not None:
+            end_sil_sec = float(silence_threshold_sec)
+            short_sil_sec = min(SHORT_SIL, end_sil_sec)
+        else:
+            end_sil_sec = END_SIL
+            short_sil_sec = SHORT_SIL
+
+        # Sound duration needed to start a turn (needOn)
+        if is_busy:
+            need_on_sec = NEED_ON_WORKING  # 0.30s while busy/working
+        elif speaker_tier == "guest":
+            need_on_sec = NEED_ON_GUEST    # 0.20s for guests
+        else:
+            need_on_sec = NEED_ON_IDLE     # 0.15s when idle or speaking
+        need_on_chunks = max(1, int(round(need_on_sec / self.chunk_duration)))
+
+        # Pre-speech audio ring buffer (PRE: 0.40s = 5 chunks @ 80ms)
+        pre_chunks_count = max(1, int(round(PRE_BUFFER_SEC / self.chunk_duration)))
+        pre_buffer = deque(maxlen=pre_chunks_count)
+
         # Wait for worker calibration before we start listening (fast 1.5s max)
         calib_deadline = time.time() + 1.5
         while not self.worker.calibrated and time.time() < calib_deadline:
             time.sleep(0.02)
 
-        # Drain stale audio chunks from before listening began (0 keeps zero echo from speaker)
-        self.worker.drain(keep_recent=0)
+        # Drain stale audio chunks from before listening began (keeping at most pre_chunks_count)
+        self.worker.drain(keep_recent=pre_chunks_count)
 
         # Immediate mic handover: render live mic indicator instantly!
         status_bar.render_listening(level=0, is_heard=False)
@@ -550,7 +597,17 @@ class NativeSpeechRecognizer:
             dsp = AudioDSPFilter(sample_rate=sr, chunk_samples=int(sr * cd))
             self.dsp = dsp
 
-        pre_buffer = deque(maxlen=6)  # 480ms pre-speech ring buffer so opening words are never clipped
+        # Setup streaming partial recognizer if Vosk model is available
+        streaming_rec = None
+        v_model = getattr(self, "vosk_model", None)
+        if v_model:
+            try:
+                import vosk
+                sr_val = getattr(self, "sample_rate", 16000)
+                streaming_rec = vosk.KaldiRecognizer(v_model, sr_val)
+            except Exception:
+                streaming_rec = None
+
         recorded_frames = []
         is_speaking = False
         self.is_user_speaking = False
@@ -558,33 +615,16 @@ class NativeSpeechRecognizer:
         speech_chunks_count = 0
         harmonic_chunks_count = 0
         silence_chunks = 0
-        max_silence_chunks = max(3, int(silence_threshold_sec / self.chunk_duration))  # ~3-4 chunks = 240-320ms fast endpointing
+        speech_start_baseline = 250.0
 
         start_time = time.time()
         last_chunk_time = start_time
         speech_start_time = 0.0
-        max_speech_sec = 8.0  # Cap maximum continuous utterance to 8s so it never hangs
+        last_refresh_time = 0.0
+        speaker_was_ducked = False
 
         try:
             while True:
-                # Acoustic Echo Protection: If Ezra is speaking aloud, drain buffer and discard pre-buffer
-                try:
-                    from jarvis.voice.speaker import voice_speaker
-                    if getattr(voice_speaker, "is_speaking", False):
-                        pre_buffer.clear()
-                        recorded_frames.clear()
-                        is_speaking = False
-                        self.is_user_speaking = False
-                        consecutive_voice_chunks = 0
-                        speech_chunks_count = 0
-                        harmonic_chunks_count = 0
-                        start_time = time.time()
-                        last_chunk_time = start_time
-                        time.sleep(0.02)
-                        continue
-                except Exception:
-                    pass
-
                 item = self.worker.get_chunk()
                 if item is None:
                     time.sleep(0.01)
@@ -592,10 +632,10 @@ class NativeSpeechRecognizer:
                     if not is_speaking and (now - start_time > max_wait_sec):
                         break
                     if is_speaking:
-                        # Global speech duration guard
-                        if speech_start_time and (now - speech_start_time > max_speech_sec):
+                        # MAX_UTT hard cap (60s)
+                        if speech_start_time and (now - speech_start_time > MAX_UTT):
                             break
-                        # Stalled chunk timeout: if audio capture worker stalls for >1.2s after speaking begins, exit loop cleanly
+                        # Stalled chunk safety timeout
                         if now - last_chunk_time > 1.2:
                             break
                     continue
@@ -607,62 +647,152 @@ class NativeSpeechRecognizer:
                     chunk, ac_rms = item[0], item[1]
                     harmonic_density = dsp.calc_harmonic_density(chunk)
 
+                # Check if Ezra speaker is actively outputting audio
+                is_speaker_active = False
+                try:
+                    is_speaker_active = getattr(voice_speaker, "is_speaking", False)
+                except Exception:
+                    pass
+
                 baseline = min(self.worker.ambient_baseline, 600.0)
-                # Near-field speech energy barrier: increase minimum speech activation SNR ratio and energy margin
-                # so distant voices (TV across the room, kids playing in background) do not cross the vocal trigger threshold
-                speech_threshold = max(baseline * 1.65 + 60.0, 240.0)
+
+                # Speech threshold:
+                # Musa: "Speech has to be about 3 to 6 times louder than background level to count"
+                if is_speaker_active:
+                    # Higher margin while Ezra speaks so speaker echo doesn't trigger
+                    speech_threshold = max(baseline * 3.8 + 60.0, 280.0)
+                else:
+                    speech_threshold = max(baseline * 3.0, 180.0)
 
                 # Dynamic VU Audio Meter: voice dynamically fills the bar
                 excess = max(0.0, ac_rms - baseline)
-                scale_span = max(baseline * 1.1, 200.0)
+                scale_span = max(baseline * 1.2, 200.0)
                 level = min(10, max(0, int((excess / scale_span) * 10)))
 
-                # Check vocal harmonic density: distinguish speech formants from claps, pops, clicks, or hum
+                # Check vocal harmonic density
                 samples_raw = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) if len(chunk) >= 2 else np.array([])
                 is_synthetic_mock = len(samples_raw) > 0 and np.all(samples_raw == 0) and ac_rms > 0
                 has_vocal_harmonics = is_synthetic_mock or (harmonic_density >= 0.18)
 
-                if ac_rms > speech_threshold:
-                    if has_vocal_harmonics:
+                if not is_speaking:
+                    # ONSET DETECTION PHASE
+                    if ac_rms > speech_threshold and has_vocal_harmonics:
                         consecutive_voice_chunks += 1
-                        harmonic_chunks_count += 1
+
+                        # Musa: Turn volume down (duck) right away if speaking while Musa is talking
+                        if is_speaker_active and not speaker_was_ducked:
+                            try:
+                                voice_speaker.duck_volume(0.15)
+                                speaker_was_ducked = True
+                            except Exception:
+                                pass
+
+                        if consecutive_voice_chunks >= need_on_chunks:
+                            # Confirmed speech onset!
+                            is_speaking = True
+                            self.is_user_speaking = True
+                            speech_start_time = time.time()
+                            speech_start_baseline = baseline  # Musa: store baseline at moment user started talking
+                            recorded_frames.extend(list(pre_buffer))
+                            recorded_frames.append(chunk)
+                            speech_chunks_count += 1
+                            harmonic_chunks_count += 1
+                            silence_chunks = 0
+                            status_bar.render_listening(level=level, is_heard=True)
+
+                            if streaming_rec:
+                                try:
+                                    for pb in pre_buffer:
+                                        streaming_rec.AcceptWaveform(pb)
+                                    streaming_rec.AcceptWaveform(chunk)
+                                except Exception:
+                                    pass
                     else:
-                        consecutive_voice_chunks = max(0, consecutive_voice_chunks - 1)
-
-                    if consecutive_voice_chunks >= 2 and not is_speaking:
-                        is_speaking = True
-                        self.is_user_speaking = True
-                        speech_start_time = time.time()
-                        recorded_frames.extend(list(pre_buffer))
-
-                    if is_speaking:
-                        recorded_frames.append(chunk)
-                        speech_chunks_count += 1
-                        silence_chunks = 0
-                        status_bar.render_listening(level=level, is_heard=True)
-
-                        if time.time() - speech_start_time > max_speech_sec:
-                            break
-                else:
-                    consecutive_voice_chunks = 0
-                    if is_speaking:
-                        recorded_frames.append(chunk)
-                        silence_chunks += 1
-                        status_bar.render_listening(level=level, is_heard=True)
-
-                        # Natural Conversational Breathing Buffer:
-                        # Allow user 1.1s - 1.25s breathing pause between words (e.g. "you are [pause] not listening")
-                        # so natural hesitation or inter-word pauses never cut the user off prematurely.
-                        dynamic_silence_limit = 11 if speech_chunks_count >= 16 else 15
-                        if silence_chunks >= dynamic_silence_limit:
-                            break
-                    else:
+                        consecutive_voice_chunks = 0
                         pre_buffer.append(chunk)
                         status_bar.render_listening(level=level, is_heard=False)
+                        # If speaker was ducked on a false trigger, restore it
+                        if speaker_was_ducked and not is_speaking:
+                            try:
+                                voice_speaker.restore_volume(1.0)
+                                speaker_was_ducked = False
+                            except Exception:
+                                pass
+
                         if time.time() - start_time > max_wait_sec:
                             break
 
-                # Instant manual cutoff: non-blocking stdin check (never hangs)
+                else:
+                    # ACTIVE SPEECH RECORDING PHASE
+                    recorded_frames.append(chunk)
+                    if streaming_rec:
+                        try:
+                            streaming_rec.AcceptWaveform(chunk)
+                        except Exception:
+                            pass
+
+                    # Musa: Silence means volume drops below 2x the background level at speech onset
+                    silence_cutoff = speech_start_baseline * 2.0
+                    if ac_rms < silence_cutoff:
+                        silence_chunks += 1
+                    else:
+                        silence_chunks = 0
+                        speech_chunks_count += 1
+                        if has_vocal_harmonics:
+                            harmonic_chunks_count += 1
+
+                    # If speaking while Ezra was playing and voice confirmed (>0.35s), stop reply for good
+                    if is_speaker_active and speech_chunks_count >= 5:
+                        try:
+                            voice_speaker.stop()
+                            speaker_was_ducked = False
+                        except Exception:
+                            pass
+
+                    # Live Streaming Transcript Refresh:
+                    # Musa: every 1.8s, or every 0.35s if Musa is speaking at the same time
+                    refresh_interval = 0.35 if is_speaker_active else 1.8
+                    now = time.time()
+                    if streaming_rec and (now - last_refresh_time >= refresh_interval):
+                        last_refresh_time = now
+                        try:
+                            res_dict = json.loads(streaming_rec.PartialResult())
+                            partial = res_dict.get("partial", "").strip()
+                            if partial:
+                                self.last_streaming_transcription = partial
+                                status_bar.render_listening(level=level, is_heard=True, transcript=partial)
+                                if on_partial_transcript:
+                                    on_partial_transcript(partial)
+
+                                # Musa: Saying a stop word stops speech straight away
+                                if is_speaker_active:
+                                    p_low = partial.lower()
+                                    if any(w in p_low for w in ("stop", "quiet", "wait", "hold on", "shut up", "hush", "اسكت", "توقف", "بس", "كافي")):
+                                        voice_speaker.stop()
+                                        speaker_was_ducked = False
+                        except Exception:
+                            pass
+                    else:
+                        status_bar.render_listening(level=level, is_heard=True, transcript=self.last_streaming_transcription)
+
+                    # Check turn completion conditions:
+                    # 1. MAX_UTT (60.0s) hard cap
+                    if now - speech_start_time >= MAX_UTT:
+                        break
+
+                    # 2. Silence Endpointing (skipped in Push-to-Talk mode)
+                    if not is_ptt:
+                        speech_duration = speech_chunks_count * self.chunk_duration
+                        if speech_duration >= SPEECH_LONG_THRESHOLD:  # > 1.2s
+                            target_silence = end_sil_sec              # 1.6s default
+                        else:
+                            target_silence = short_sil_sec            # 0.9s default
+
+                        target_silence_chunks = max(3, int(round(target_silence / self.chunk_duration)))
+                        if silence_chunks >= target_silence_chunks:
+                            break
+
+                # Manual cutoff / Space bar / Enter check (non-blocking)
                 try:
                     if select.select([sys.stdin], [], [], 0)[0]:
                         try:
@@ -677,10 +807,16 @@ class NativeSpeechRecognizer:
         finally:
             self.is_user_speaking = False
             status_bar.clear()
+            if speaker_was_ducked and not getattr(voice_speaker, "is_speaking", False):
+                try:
+                    voice_speaker.restore_volume(1.0)
+                except Exception:
+                    pass
 
-        # Minimum speech duration & vocal harmonic density check:
-        # Prevent brief ambient pops, claps, laughter, or background shouts from prematurely triggering speech capture
-        if not recorded_frames or not is_speaking or speech_chunks_count < 3:
+        # MIN_SPEECH (0.35s) Check:
+        # Musa: "Shortest speech it accepts: 0.35s (MIN_SPEECH). Anything shorter is treated as a noise, like a cough or click, and thrown away."
+        total_speech_sec = speech_chunks_count * self.chunk_duration
+        if not recorded_frames or not is_speaking or total_speech_sec < MIN_SPEECH:
             return ""
 
         pcm_bytes = b"".join(recorded_frames)

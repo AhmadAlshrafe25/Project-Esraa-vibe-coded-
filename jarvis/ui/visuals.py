@@ -188,13 +188,19 @@ class StatusBar:
             sys.stdout.write("\r\033[K")
             sys.stdout.flush()
 
-    def render_listening(self, level: int = 0, is_heard: bool = False):
-        """Renders live mic status bar with instant responsiveness."""
+    def render_listening(self, level: int = 0, is_heard: bool = False, transcript: str = ""):
+        """Renders live mic status bar with instant responsiveness and real-time streaming transcript."""
         clamped = max(0, min(10, level))
         meter_bar = "█" * clamped + "░" * (10 - clamped)
         with self._lock:
             if is_heard:
-                sys.stdout.write(f"\r\033[1;32m[🎙️ Heard You  |{meter_bar}| (Capturing voice...)]\033[0m\033[K")
+                if transcript and transcript.strip():
+                    disp_t = transcript.strip()
+                    if len(disp_t) > 36:
+                        disp_t = disp_t[-36:]
+                    sys.stdout.write(f"\r\033[1;32m[🎙️ Heard You  |{meter_bar}| \"{disp_t}\"]\033[0m\033[K")
+                else:
+                    sys.stdout.write(f"\r\033[1;32m[🎙️ Heard You  |{meter_bar}| (Capturing voice...)]\033[0m\033[K")
             else:
                 sys.stdout.write(f"\r\033[1;36m[🎙️ Mic Live   |{meter_bar}| (Speak freely)]\033[0m\033[K")
             sys.stdout.flush()

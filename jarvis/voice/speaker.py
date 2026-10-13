@@ -38,6 +38,7 @@ class SmoothSpeaker:
         self.is_muted: bool = False
         self.is_speaking: bool = False
         self.is_interrupted: bool = False
+        self.is_ducked: bool = False
         self.robotic_mode: bool = os.getenv("ROBOTIC_VOICE", "false").lower() in ("true", "1", "yes")
         self._active_proc = None
 
@@ -79,10 +80,43 @@ class SmoothSpeaker:
         self.is_muted = not self.is_muted
         return self.is_muted
 
+    def duck_volume(self, level: float = 0.15):
+        """Immediately turns volume down or mutes speech output when user starts talking."""
+        self.is_ducked = True
+        if HAS_PYGAME_MIXER:
+            try:
+                pygame.mixer.music.set_volume(level)
+            except Exception:
+                pass
+        elif self._active_proc and self._active_proc.poll() is None:
+            try:
+                import signal
+                os.kill(self._active_proc.pid, signal.SIGSTOP)
+            except Exception:
+                pass
+
+    def restore_volume(self, level: float = 1.0):
+        """Restores speech output volume if user vocalization was just transient echo or noise."""
+        if not getattr(self, "is_ducked", False):
+            return
+        self.is_ducked = False
+        if HAS_PYGAME_MIXER:
+            try:
+                pygame.mixer.music.set_volume(level)
+            except Exception:
+                pass
+        elif self._active_proc and self._active_proc.poll() is None:
+            try:
+                import signal
+                os.kill(self._active_proc.pid, signal.SIGCONT)
+            except Exception:
+                pass
+
     def stop(self):
         """Immediately cuts off and silences Ezra's speech output."""
         self.is_interrupted = True
         self.is_speaking = False
+        self.is_ducked = False
         try:
             from jarvis.ui.visuals import status_bar
             status_bar.stop_speaking()
@@ -95,9 +129,18 @@ class SmoothSpeaker:
                 pass
         if self._active_proc:
             try:
+                import signal
+                try:
+                    os.kill(self._active_proc.pid, signal.SIGCONT)
+                except Exception:
+                    pass
                 self._active_proc.terminate()
+                self._active_proc.wait(timeout=0.1)
             except Exception:
-                pass
+                try:
+                    self._active_proc.kill()
+                except Exception:
+                    pass
             self._active_proc = None
 
     def _play_file_with_interrupt(self, audio_path: str, text: str = "", prefix: str = "", live_print: bool = True) -> bool:

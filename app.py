@@ -169,14 +169,21 @@ def continuous_conversation_loop():
     lid_mon = LidWakeMonitor(on_wake_callback=on_laptop_wake)
     lid_mon.start()
 
+    from config.settings import ANSWER_ONLY_ON_WAKE, PUSH_TO_TALK, END_SIL, SHORT_SIL, MAX_UTT
+
     print("\n\033[1;32m╔═══════════════════════════════════════════════════════════════╗\033[0m")
     print("\033[1;32m║          ⚡ HANDS-FREE INTELLIGENT CONVERSATION ENGINE        ║\033[0m")
     print("\033[1;32m╚═══════════════════════════════════════════════════════════════╝\033[0m")
     print("\033[1;36m[•] Active Mode:\033[0m Listening now! Speak freely into your headset.")
+    print(f"\033[1;36m[•] Musa Timing:\033[0m {END_SIL}s quiet wait (>1.2s speech), {SHORT_SIL}s on short replies, {MAX_UTT:.0f}s max.")
+    if PUSH_TO_TALK:
+        print("\033[1;33m[•] Push-To-Talk:\033[0m ENABLED (Hold key to talk, release to finish).")
+    if ANSWER_ONLY_ON_WAKE:
+        print("\033[1;33m[•] Wake Only Mode:\033[0m ENABLED (Responds only to 'Ezra' / 'عزرا').")
     print("\033[1;36m[•] Instant Wake:\033[0m Activates the second the laptop lid opens or wakes from sleep.")
     print("\033[1;36m[•] Dwell Window:\033[0m 25s conversational follow-up (enters quiet standby so colleague chats aren't overheard).")
     print("\033[1;36m[•] Sleep Command:\033[0m Say \033[1;31m'go to sleep'\033[0m or \033[1;31m'اسكت'\033[0m to return to standby.")
-    print("\033[1;36m[•] Interrupt:\033[0m Tap ENTER or SPACE anytime to interrupt.\n")
+    print("\033[1;36m[•] Interrupt:\033[0m Speak to interrupt, or tap ENTER/SPACE anytime.\n")
 
     # Immediate voice prompt so user verifies headset audio is live
     voice_speaker.speak("I'm listening, sir. Speak freely.", prefix="\033[1;36m[Ezra]:\033[0m ", live_print=True)
@@ -194,8 +201,12 @@ def continuous_conversation_loop():
                 # Instant Mic Handover: render live mic indicator immediately!
                 status_bar.render_listening(level=0, is_heard=False)
 
-                # Record turn from microphone with fast 320ms endpointing
-                audio_file = stt_engine.record_until_finished(max_wait_sec=8.0, silence_threshold_sec=0.32)
+                # Record turn from microphone using Musa's exact turn-taking & silence endpointing architecture
+                audio_file = stt_engine.record_until_finished(
+                    max_wait_sec=15.0,
+                    is_busy=False,
+                    push_to_talk=PUSH_TO_TALK
+                )
                 if not audio_file:
                     continue
 
@@ -218,8 +229,14 @@ def continuous_conversation_loop():
                     print(f"\033[1;30m[Acoustic Filter]: Suppressed ambient chatter / TV dialogue: \"{transcription}\"\033[0m")
                     continue
 
-                # In dwell mode: ignore guest or far-field voices if not addressed to Ezra
                 has_wake, wake_cmd = check_wake_word(transcription)
+
+                # Musa Setting: Answer only when I say "Ezra"
+                if ANSWER_ONLY_ON_WAKE and not has_wake:
+                    print(f"\033[1;30m[Wake Filter]: Ignored speech without wake word (ANSWER_ONLY_ON_WAKE=True): \"{transcription}\"\033[0m")
+                    continue
+
+                # In dwell mode: ignore guest or far-field voices if not addressed to Ezra
                 if loop_state["is_awake"] and tier in ("guest", "unsure") and not has_wake:
                     print(f"\033[1;30m[Biometric Near-Field Gate]: Suppressed unaddressed background voice: \"{transcription}\" ({detail})\033[0m")
                     continue
