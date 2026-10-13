@@ -243,18 +243,24 @@ class NativeSpeechRecognizer:
         # Persistent stream worker: keeps capture device open continuously
         self.worker = AudioStreamWorker(sample_rate=self.sample_rate, chunk_duration=self.chunk_duration)
 
-    def record_until_finished(self, max_wait_sec: float = 8.0, silence_threshold_sec: float = 0.50) -> str:
+    def record_until_finished(self, max_wait_sec: float = 8.0, silence_threshold_sec: float = 1.6) -> str:
         """
         Dynamically records only genuine human speech with real-time streaming Vosk recognition:
         - True adaptive noise floor: perfectly calibrated to room acoustics (~6500-7500 RMS).
         - Speech threshold: requires vocal energy clearly above steady noise floor.
         - Streams incoming audio directly into Vosk Kaldi recognizer concurrently.
-        - Sub-second silence cut-off: 0.50s trigger when user stops speaking.
+        - Generous silence endpointing: waits for user to truly finish speaking.
+        - Idle timeout only starts AFTER worker is calibrated and delivering chunks.
         """
         ensure_hardware_mic_volume()
         self.last_streaming_transcription = ""
         self.last_spk_vector = []
         wav_file = CACHE_DIR / f"mic_{uuid.uuid4().hex[:8]}.wav"
+
+        # Wait for worker calibration before we start — don't burn idle timer during warmup
+        calib_deadline = time.time() + 8.0
+        while not self.worker.calibrated and time.time() < calib_deadline:
+            time.sleep(0.05)
 
         # Drain stale chunks from before listening began (keep 4 chunks = 320ms for pre-buffer)
         self.worker.drain(keep_recent=4)
@@ -277,11 +283,12 @@ class NativeSpeechRecognizer:
         consecutive_voice_chunks = 0
         speech_chunks_count = 0
         silence_chunks = 0
-        max_silence_chunks = max(3, int(silence_threshold_sec / self.chunk_duration))
+        max_silence_chunks = max(5, int(silence_threshold_sec / self.chunk_duration))
 
+        # Idle timer starts NOW (after calibration), not when the function was called
         start_time = time.time()
         speech_start_time = 0.0
-        max_speech_sec = 15.0  # Allow plenty of time for complete commands
+        max_speech_sec = 30.0  # Allow long utterances — user talks at their own pace
 
         try:
             while True:
@@ -312,14 +319,7 @@ class NativeSpeechRecognizer:
                         recorded_frames.extend(buffered_list)
                         if vosk_rec:
                             for b_chunk in buffered_list:
-                                if vosk_rec.AcceptWaveform(b_chunk):
-                                    try:
-                                        res = json.loads(vosk_rec.Result())
-                                        txt = res.get("text", "").strip()
-                                        if txt:
-                                            recognized_segments.append(txt)
-                                    except Exception:
-                                        pass
+                                vosk_rec.AcceptWaveform(b_chunk)
 
                     if is_speaking:
                         print(f"\r\033[1;32m[🎙 Speaking  |{meter_bar}|]\033[0m\033[K", end="", flush=True)

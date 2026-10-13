@@ -6,7 +6,6 @@ from jarvis.brain.engine import brain_service
 from jarvis.voice.speaker import voice_speaker
 from jarvis.voice.stt import stt_engine
 from jarvis.memory import memory_service
-from jarvis.ui.visuals import visualizer
 
 BANNER = """\033[1;36m
   ╔═══════════════════════════════════════════════════════════════╗
@@ -29,19 +28,19 @@ def print_banner():
     print("-" * 65 + "\n")
 
 async def handle_turn(text: str) -> dict:
-    """Processes a user turn with animated brain sphere and synchronized typewriter speech with full barge-in cut-out."""
+    """Processes a user turn: think → speak. Clean conversational flow, no animations."""
     clean = text.lower().strip()
     if clean in ("stop", "pause", "exit", "quit", "goodbye", "bye", "cancel"):
         farewell = "Understood. Pausing conversation loop, sir."
         voice_speaker.speak(farewell, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
         return {"should_continue": False, "was_interrupted": False}
 
-    print(f"\n\033[1;34m[You]:\033[0m {text}\n")
-    
-    # Start animated brain with glowing yellow sphere
-    visualizer.start_agent_brain("Ezra Neural Core")
+    print(f"\n\033[1;34m[You]:\033[0m {text}")
+
+    # Simple thinking indicator — no intrusive animations
+    print("\033[1;33m  ... thinking\033[0m", end="", flush=True)
     response = await brain_service.think(text)
-    visualizer.stop_agent_brain()
+    print("\r\033[K", end="", flush=True)  # Clear the "thinking" line
 
     reply_speech = response.get("speech_text", "")
     tools = response.get("tool_calls", [])
@@ -49,9 +48,9 @@ async def handle_turn(text: str) -> dict:
     if tools:
         for t in tools:
             if "tool" in t:
-                print(f"\033[1;33m[Action Executed]:\033[0m {t['tool']}")
+                print(f"\033[1;33m[Action]:\033[0m {t['tool']}")
 
-    # Synchronized speech & live typewriter with instant interruption (barge-in)
+    # Speak the reply with live typewriter and barge-in support
     prefix = "\033[1;35m[Ezra (Silent)]:\033[0m " if voice_speaker.is_muted else "\033[1;36m[Ezra]:\033[0m "
     completed = voice_speaker.speak(reply_speech, prefix=prefix, live_print=True)
     return {"should_continue": True, "was_interrupted": not completed}
@@ -68,7 +67,7 @@ def run_voice_enrollment():
     voice_speaker.speak("Please speak clearly for a few seconds so I can sequence and lock into your unique voice genetic code, sir.")
     print("\033[1;32m[🎙️ Ready — Speak now!]\033[0m")
     
-    audio_file = stt_engine.record_until_finished(max_wait_sec=10.0, silence_threshold_sec=1.2)
+    audio_file = stt_engine.record_until_finished(max_wait_sec=12.0, silence_threshold_sec=2.0)
     if not audio_file or not stt_engine.last_spk_vector:
         print("\033[1;31m[-] Calibration incomplete: No vocal profile captured. Please speak a little louder.\033[0m\n")
         return
@@ -92,7 +91,7 @@ def continuous_conversation_loop():
     silence_count = 0
     while True:
         try:
-            audio_file = stt_engine.record_until_finished(max_wait_sec=10.0, silence_threshold_sec=1.2)
+            audio_file = stt_engine.record_until_finished(max_wait_sec=12.0, silence_threshold_sec=2.0)
             
             if not audio_file:
                 silence_count += 1
