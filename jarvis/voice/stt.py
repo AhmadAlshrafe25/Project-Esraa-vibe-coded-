@@ -453,7 +453,7 @@ class NativeSpeechRecognizer:
         low = t.lower()
 
         # If explicitly addresses Ezra or contains wake word, NEVER reject
-        if re.search(r"\b(ezra|israel|esra|asra|azra|ezrah|jarvis)\b", low):
+        if re.search(r"\b(ezra|israel|esra|asra|azra|ezrah)\b", low):
             return False
 
         # 1. Ambient room chatter / speaking to family, kids, colleagues (not directed at assistant)

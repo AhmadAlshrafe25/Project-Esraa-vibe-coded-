@@ -5,13 +5,12 @@ from pathlib import Path
 import edge_tts
 from config.settings import DEFAULT_VOICE, VOICE_RATE, VOICE_PITCH, CACHE_DIR
 
-# Available high quality female voices (Free neural voices)
+# Available high quality voices (Free neural voices)
 FEMALE_VOICES = {
-    "british": "en-GB-SoniaNeural",       # Polite, intelligent, British JARVIS style
-    "american_aria": "en-US-AriaNeural",  # Expressive, crisp American female
-    "american_jenny": "en-US-JennyNeural",# Friendly, conversational
-    "arabic_salma": "ar-EG-SalmaNeural",  # Egyptian Arabic female
-    "arabic_zariyah": "ar-SA-ZariyahNeural" # Saudi Arabic female
+    "british": "en-GB-RyanNeural",        # Polite, intelligent British voice
+    "british_female": "en-GB-SoniaNeural",# Articulate British female voice
+    "american_aria": "en-US-AriaNeural",  # Expressive, crisp American voice
+    "american_jenny": "en-US-JennyNeural" # Friendly, conversational American voice
 }
 
 from jarvis.voice.local_tts import LocalNeuralTTS

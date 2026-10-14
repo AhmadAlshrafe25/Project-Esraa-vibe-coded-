@@ -1,5 +1,5 @@
 /**
- * PROJECT EZRA // HOLOGRAPHIC JARVIS CLIENT CONTROLLER v3
+ * PROJECT EZRA // HOLOGRAPHIC NEURAL CLIENT CONTROLLER v3
  * Manages WebSocket telemetry, state machine, waveform, chat, quick actions.
  */
 

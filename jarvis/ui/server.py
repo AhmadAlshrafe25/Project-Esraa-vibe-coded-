@@ -42,7 +42,7 @@ DISTRO_NAME = detect_distro_name()
 
 class EzraUIServer:
     """
-    JARVIS Holographic UI Web & WebSocket Server.
+    Ezra Holographic UI Web & WebSocket Server.
     Provides real-time telemetry streaming, interactive chat, and desktop control station.
     """
 
@@ -359,7 +359,7 @@ def open_ui_in_browser(host: str = "127.0.0.1", port: int = 8080):
 def run_ui_standalone():
     """Runs Ezra Holographic UI Server standalone."""
     print("\n\033[1;36m╔═══════════════════════════════════════════════════════════════╗\033[0m")
-    print("\033[1;36m║          ⚡ PROJECT EZRA // HOLOGRAPHIC JARVIS UI CORE         ║\033[0m")
+    print("\033[1;36m║          ⚡ PROJECT EZRA // HOLOGRAPHIC NEURAL UI CORE         ║\033[0m")
     print("\033[1;36m╚═══════════════════════════════════════════════════════════════╝\033[0m")
     print(f"\033[1;32m[+] Server Online:\033[0m http://{HOST}:{PORT}")
     print("\033[1;32m[+] Hologram Engine:\033[0m 3D Neural Cortex & Orbiting Gyroscope Active\n")

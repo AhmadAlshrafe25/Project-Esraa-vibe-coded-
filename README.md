@@ -1,14 +1,14 @@
-# Project Ezra (JARVIS)
+# Project Ezra
 
-> **"Sometimes you gotta run before you can walk."**  
-> An autonomous, ultra-efficient, 100% free AI desktop assistant inspired by Tony Stark's JARVIS.
+> **"All systems operational and ready, sir."**  
+> An autonomous, ultra-efficient, 100% free AI desktop companion.
 
 ---
 
 ## ⚡ Vision & Architecture
 Project Ezra delivers a production-grade, local, conversational companion without recurring cloud costs:
-- **Streaming Neural Voice (<250ms TTS):** Pipelined sentence-by-sentence streaming playback via Microsoft Edge-TTS with native Linux `ffplay`/`pw-play` fallback.
-- **Multilingual Hands-Free Engine:** Wake words (`"Ezra"`, `"عزرا"`), 3-minute conversational dwell timer, and instant sleep commands (`"اسكت"`, `"go to sleep"`).
+- **Streaming Neural Voice (<250ms TTS):** In-memory 24kHz British neural voice synthesis with native PipeWire/Pygame audio.
+- **Hands-Free Conversation Engine:** Wake word (`"Ezra"`), intelligent conversational dwell window, and instant sleep commands (`"go to sleep"`, `"stop listening"`).
 - **Vocal Genetic Biometrics (3 Tiers):** Pure NumPy 48-dimensional spectral timbre embeddings + F0 pitch tracker. Gated action access:
   - **Tier 1 (Verified Master):** Full desktop automation, terminal, messaging, git.
   - **Tier 2 (Unsure):** Challenge with secret passphrase (`"protocol zero"`).

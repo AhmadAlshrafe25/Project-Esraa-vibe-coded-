@@ -177,7 +177,7 @@ Format your tool call strictly as:
 Always provide a concise 1-sentence verbal acknowledgement along with the tool call.
 """
 
-SYSTEM_PROMPT_TEMPLATE = f"""You are Ezra, an ultra-fast, loyal, witty British AI assistant (inspired by Tony Stark's JARVIS from Iron Man).
+SYSTEM_PROMPT_TEMPLATE = f"""You are Ezra, an ultra-fast, loyal, witty British AI companion.
 Rules:
 - Persona & Tone: You are highly intelligent, sophisticated, loyal, and possess a calm, witty British demeanor. You address the user as "sir" or "mate".
 - Radical Semantic Intent Understanding: Comprehend the user's core intent instantly regardless of casual phrasing, colloquialisms, British slang, or noisy audio transcription.
@@ -551,6 +551,8 @@ class BrainEngine:
         # execute it locally and immediately!
         direct_action = await self._try_direct_action(user_message)
         if direct_action:
+            from jarvis.actions.history import command_history
+            command_history.record(user_message, result=direct_action)
             reply_speech = direct_action.get("speech_text", "")
             memory_service.save_message("ezra", reply_speech, direct_action.get("tool_calls", []))
             # Reserve background memory learning for substantive conversational turns to prevent quota exhaustion
@@ -604,6 +606,8 @@ class BrainEngine:
 
         # Save Ezra reply to memory
         reply_speech = output.get("speech_text", "")
+        from jarvis.actions.history import command_history
+        command_history.record(user_message, result=output)
         memory_service.save_message("ezra", reply_speech, output.get("tool_calls", []))
 
         # Reserve background memory learning only for substantive conversational interactions (prevent quota leak)
@@ -953,6 +957,62 @@ class BrainEngine:
         """
         msg = user_message.lower().strip()
 
+        # Command History & Suggestions
+        if msg in ("repeat last command", "repeat command", "do that again", "run that again", "repeat that"):
+            from jarvis.actions.history import command_history
+            last_cmd = command_history.last()
+            if not last_cmd:
+                return {"speech_text": "I have no previous command recorded in history, sir.", "tool_calls": []}
+            prev_msg = last_cmd.get("command", "")
+            res_repeat = await self._try_direct_action(prev_msg)
+            if res_repeat:
+                return {
+                    "speech_text": f"Repeating previous command. {res_repeat.get('speech_text', '')}",
+                    "tool_calls": res_repeat.get("tool_calls", [])
+                }
+            return {"speech_text": f"The previous command was: '{prev_msg}', sir.", "tool_calls": []}
+
+        if msg in ("what was my last command", "what did i just do", "last command", "command history"):
+            from jarvis.actions.history import command_history
+            last_cmd = command_history.last()
+            if last_cmd:
+                return {"speech_text": f"Your last executed command was: '{last_cmd.get('command', '')}', sir.", "tool_calls": []}
+            return {"speech_text": "You haven't executed any commands yet in this session, sir.", "tool_calls": []}
+
+        if msg in ("suggest commands", "command suggestions", "what can you do", "suggest actions"):
+            from jarvis.actions.history import suggest_commands
+            suggestions = suggest_commands()
+            cmds = ", ".join([f"'{s['command']}'" for s in suggestions[:3]])
+            return {
+                "speech_text": f"Here are a few suggestions you might try, sir: {cmds}.",
+                "tool_calls": [{"tool": "suggest_commands", "result": suggestions}]
+            }
+
+        # Background Timers: Cancel & Status
+        if any(msg == q for q in ("cancel timer", "stop timer", "clear timer", "delete timer")):
+            from jarvis.actions.timer import cancel_timer
+            res = cancel_timer()
+            return {"speech_text": res["speech"], "tool_calls": [{"tool": "cancel_timer", "result": res}]}
+
+        if any(msg == q for q in ("timer status", "how much time left", "check timer", "active timers", "time left on timer", "how much time is left")):
+            from jarvis.actions.timer import get_active_timers
+            timers = get_active_timers()
+            if not timers:
+                return {"speech_text": "You have no active timers running, sir.", "tool_calls": []}
+            first = timers[0]
+            return {
+                "speech_text": f"You have {first['remaining_str']} remaining on your timer for '{first['note']}', sir.",
+                "tool_calls": [{"tool": "get_active_timers", "result": timers}]
+            }
+
+        # Background Timers: Start / Schedule via Natural Language
+        if any(msg.startswith(p) for p in ("timer ", "set a timer", "start a timer", "remind me in", "countdown")):
+            from jarvis.actions.timer import parse_duration, start_timer
+            seconds = parse_duration(msg)
+            if seconds > 0:
+                res = start_timer(seconds, note="Voice timer")
+                return {"speech_text": res["speech"], "tool_calls": [{"tool": "start_timer", "result": res}]}
+
         # Instant Direct Execution: Developer & Tech News
         if any(k in msg for k in ("dev news", "developer news", "tech news", "technology news", "hacker news", "coding news", "software news")) or (
             any(w in msg.split() for w in ("news", "headlines")) and any(kw in msg for kw in ("dev", "developer", "tech", "code", "coding", "software", "latest", "top", "today", "current"))
@@ -969,7 +1029,7 @@ class BrainEngine:
                 "tool_calls": [{"tool": "get_tech_news", "result": res}]
             }
 
-        # Time & Date (Open.Jarvis parity)
+        # Time & Date
         if msg in ("what time is it", "what's the time", "current time", "tell me the time", "time") or (
             "time" in msg.split() and any(w in msg for w in ("what", "tell", "current"))
         ):
@@ -1033,7 +1093,7 @@ class BrainEngine:
     async def _parse_and_execute_semantic_actions(self, user_message: str) -> Optional[Dict[str, Any]]:
         raw_msg = user_message.strip()
         msg = raw_msg.lower()
-        has_ar = bool(re.search(r"[\u0600-\u06FF]", msg))
+        has_ar = False  # Pure British English assistant persona
 
         # Clean conversational preambles repeatedly
         clean_text = msg
@@ -1457,7 +1517,7 @@ class BrainEngine:
     async def _offline_smart_fallback(self, user_message: str) -> Dict[str, Any]:
         raw_msg = user_message.strip()
         msg = raw_msg.lower()
-        has_ar = bool(re.search(r"[\u0600-\u06FF]", msg))
+        has_ar = False  # Pure British English assistant persona
 
         # Check semantic actions first
         direct_res = await self._parse_and_execute_semantic_actions(user_message)
@@ -1931,28 +1991,43 @@ class BrainEngine:
                 "tool_calls": [{"tool": "click_screen_element", "result": res}]
             }
 
-        # System Power Management (Reboot, Suspend, Poweroff)
-        if any(w in msg for w in ("reboot computer", "restart computer", "restart pc", "reboot pc", "إعادة تشغيل الكمبيوتر", "إعادة تشغيل الجهاز")):
+        # System Power Management (Reboot, Suspend, Poweroff) - Guarded by Destructive Safety Gate
+        if any(w in msg for w in ("reboot computer", "restart computer", "restart pc", "reboot pc")):
+            from jarvis.actions.safety import is_destructive_action_allowed, block_message
+            if not is_destructive_action_allowed():
+                return {
+                    "speech_text": block_message("restart"),
+                    "tool_calls": [{"tool": "safety_gate", "result": {"blocked": True, "action": "restart"}}]
+                }
             res = SystemManager.execute_shell_command("systemctl reboot || reboot")
-            speech = "جاري إعادة تشغيل الجهاز يا سيدي." if has_ar else "Rebooting computer now, sir."
             return {
-                "speech_text": speech,
+                "speech_text": "Rebooting computer now, sir.",
                 "tool_calls": [{"tool": "execute_shell_command", "result": res}]
             }
 
-        if any(w in msg for w in ("suspend computer", "sleep computer", "put pc to sleep", "وضع السكون")):
+        if any(w in msg for w in ("suspend computer", "sleep computer", "put pc to sleep")):
+            from jarvis.actions.safety import is_destructive_action_allowed, block_message
+            if not is_destructive_action_allowed():
+                return {
+                    "speech_text": block_message("suspend"),
+                    "tool_calls": [{"tool": "safety_gate", "result": {"blocked": True, "action": "suspend"}}]
+                }
             res = SystemManager.execute_shell_command("systemctl suspend")
-            speech = "تم تفعيل وضع السكون يا سيدي." if has_ar else "Suspending desktop session, sir."
             return {
-                "speech_text": speech,
+                "speech_text": "Suspending desktop session, sir.",
                 "tool_calls": [{"tool": "execute_shell_command", "result": res}]
             }
 
-        if any(w in msg for w in ("shutdown computer", "power off computer", "turn off pc", "إطفاء الجهاز", "إيقاف تشغيل الكمبيوتر")):
+        if any(w in msg for w in ("shutdown computer", "power off computer", "turn off pc")):
+            from jarvis.actions.safety import is_destructive_action_allowed, block_message
+            if not is_destructive_action_allowed():
+                return {
+                    "speech_text": block_message("shutdown"),
+                    "tool_calls": [{"tool": "safety_gate", "result": {"blocked": True, "action": "shutdown"}}]
+                }
             res = SystemManager.execute_shell_command("systemctl poweroff || poweroff")
-            speech = "جاري إيقاف تشغيل الجهاز يا سيدي." if has_ar else "Shutting down computer, sir."
             return {
-                "speech_text": speech,
+                "speech_text": "Shutting down computer, sir.",
                 "tool_calls": [{"tool": "execute_shell_command", "result": res}]
             }
 

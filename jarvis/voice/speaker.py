@@ -52,7 +52,7 @@ class SmoothSpeaker:
 
     def __init__(self, voice: str = "bm_george"):
         self.voice = voice  # High-clarity British neural voice (bm_george / bf_isabella / bm_lewis)
-        self.fallback_voice = "en-GB-RyanNeural"  # Open.Jarvis Ryan British neural
+        self.fallback_voice = "en-GB-RyanNeural"  # British neural voice
         self.is_muted: bool = False
         self.is_speaking: bool = False
         self.is_interrupted: bool = False

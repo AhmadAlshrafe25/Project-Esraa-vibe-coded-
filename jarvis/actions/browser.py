@@ -67,10 +67,12 @@ class BrowserManager:
 
     @staticmethod
     def open_url(url: str) -> dict:
-        if not url.startswith("http://") and not url.startswith("https://"):
-            url = f"https://{url}"
-        BrowserManager._launch_url_reliably(url)
-        return {"status": "success", "message": f"Opened {url} in browser."}
+        from jarvis.actions.url_safety import normalize_web_url
+        safe_url = normalize_web_url(url)
+        if not safe_url:
+            return {"status": "error", "message": f"Blocked unsafe or malformed URL: {url}"}
+        BrowserManager._launch_url_reliably(safe_url)
+        return {"status": "success", "message": f"Opened {safe_url} in browser."}
 
     @staticmethod
     def search_web(query: str, engine: str = "google") -> dict:

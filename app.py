@@ -21,7 +21,7 @@ def print_banner():
     elif voice_speaker.robotic_mode:
         voice_status = "\033[1;36mActive (Cybernetic Robot Synth)\033[0m"
     else:
-        voice_status = "\033[1;32mActive (Silky Neural JARVIS)\033[0m"
+        voice_status = "\033[1;32mActive (Silky Neural Ezra)\033[0m"
     tg_status = "\033[1;32mActive (Remote Control Ready)\033[0m" if TELEGRAM_BOT_TOKEN else "\033[1;33mStandby (Configure in .env)\033[0m"
     print(BANNER)
     print("\033[1;32m[+] Engine:\033[0m Ultra-Fast Neural Core (Direct Voice Stream)")
@@ -104,19 +104,19 @@ def run_voice_enrollment():
         print(f"\033[1;31m[-] Calibration error: {e}\033[0m\n")
 
 def check_wake_word(text: str) -> tuple:
-    """Checks if text begins with or contains a wake word (Ezra / Jarvis) anywhere."""
+    """Checks if text begins with or contains a wake word (Ezra) anywhere."""
     import re
     if not text:
         return False, ""
     low = text.lower().strip()
 
-    # Flexible English detection: 'Ezra', 'Hey Ezra', 'Hello Ezra', 'Jarvis' anywhere
-    m_en = re.search(r"\b(ezra|israel|esra|asra|azra|ezrah|jarvis)\b", low, re.IGNORECASE)
+    # Flexible English detection: 'Ezra', 'Hey Ezra', 'Hello Ezra' anywhere
+    m_en = re.search(r"\b(ezra|israel|esra|asra|azra|ezrah)\b", low, re.IGNORECASE)
     if m_en:
         # Strip wake word and conversational preamble
-        clean_cmd = re.sub(r"^(?:hey|hi|hello|ok|okay|yo)?\s*(?:ezra|israel|esra|asra|azra|ezrah|jarvis)[\s,.:;]*", "", low, flags=re.IGNORECASE).strip()
+        clean_cmd = re.sub(r"^(?:hey|hi|hello|ok|okay|yo)?\s*(?:ezra|israel|esra|asra|azra|ezrah)[\s,.:;]*", "", low, flags=re.IGNORECASE).strip()
         if not clean_cmd:
-            clean_cmd = re.sub(r"[\s,.:;]*(?:ezra|israel|esra|asra|azra|ezrah|jarvis)\s*$", "", low, flags=re.IGNORECASE).strip()
+            clean_cmd = re.sub(r"[\s,.:;]*(?:ezra|israel|esra|asra|azra|ezrah)\s*$", "", low, flags=re.IGNORECASE).strip()
         return True, clean_cmd
 
     return False, ""
@@ -126,7 +126,7 @@ def continuous_conversation_loop():
     Continuous conversation loop:
     1. Starts immediately ACTIVE (awake) because user pressed ENTER!
     2. Active 3-minute dwell window before auto-standby.
-    3. Flexible wake word reactivation ('Ezra' / 'Jarvis').
+    3. Flexible wake word reactivation ('Ezra').
     4. Instant sleep command ('go to sleep' / 'sleep').
     """
     import re
@@ -176,7 +176,7 @@ def continuous_conversation_loop():
     if PUSH_TO_TALK:
         print("\033[1;33m[•] Push-To-Talk:\033[0m ENABLED (Hold key to talk, release to finish).")
     if ANSWER_ONLY_ON_WAKE:
-        print("\033[1;33m[•] Wake Only Mode:\033[0m ENABLED (Responds only to 'Ezra' / 'Jarvis').")
+        print("\033[1;33m[•] Wake Only Mode:\033[0m ENABLED (Responds only to 'Ezra').")
     print("\033[1;36m[•] Instant Wake:\033[0m Activates the second the laptop lid opens or wakes from sleep.")
     print("\033[1;36m[•] Dwell Window:\033[0m 25s conversational follow-up (enters quiet standby so colleague chats aren't overheard).")
     print("\033[1;36m[•] Sleep Command:\033[0m Say \033[1;31m'go to sleep'\033[0m or \033[1;31m'stop listening'\033[0m to return to standby.")
@@ -416,7 +416,7 @@ def main():
 
             if user_choice.lower() in ("/neural", "/smooth", "/human", "neural"):
                 voice_speaker.set_robotic_mode(False)
-                print("\033[1;32m[Ezra Voice: Silky Neural JARVIS Active]\033[0m\n")
+                print("\033[1;32m[Ezra Voice: Silky Neural Ezra Active]\033[0m\n")
                 voice_speaker.speak("Neural voice restored, sir.")
                 continue
 
