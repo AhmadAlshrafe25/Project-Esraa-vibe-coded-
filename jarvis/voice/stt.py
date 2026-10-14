@@ -349,11 +349,13 @@ class NativeSpeechRecognizer:
         ensure_hardware_mic_volume()
         self.last_streaming_transcription = ""
 
-        # Initialize ultra-fast local Whisper Neural Model (<460ms decoding, slang + Arabic + British English)
+        # Initialize ultra-fast local Whisper Neural Model (accurate slang + Arabic + British English)
         self.whisper_model = None
         try:
             from faster_whisper import WhisperModel
-            whisper_dir = Path.home() / ".cache" / "whisper_models" / "tiny"
+            whisper_base = Path.home() / ".cache" / "whisper_models" / "base"
+            whisper_tiny = Path.home() / ".cache" / "whisper_models" / "tiny"
+            whisper_dir = whisper_base if whisper_base.exists() else whisper_tiny
             if whisper_dir.exists():
                 self.whisper_model = WhisperModel(str(whisper_dir), device="cpu", compute_type="int8", cpu_threads=4)
         except Exception:
@@ -854,13 +856,16 @@ class NativeSpeechRecognizer:
 
         raw_transcription = ""
 
-        # Tier 1: Local Whisper Neural Model (<460ms, accurate British English, modern slang & Arabic)
+        # Tier 1: Local Whisper Neural Model (accurate British English, modern slang & Arabic)
         if self.whisper_model:
             try:
                 segments, info = self.whisper_model.transcribe(
                     audio_path,
-                    beam_size=1,
-                    initial_prompt="Ezra, British English, innit, mate, Arabic العربية"
+                    beam_size=3,
+                    best_of=3,
+                    temperature=0.0,
+                    condition_on_previous_text=False,
+                    initial_prompt="Ezra, British English, innit, mate, bruv, cheers, Arabic, مرحبا عزرا"
                 )
                 whisper_text = " ".join([s.text for s in segments]).strip()
                 if whisper_text and len(whisper_text) > 1:
