@@ -119,9 +119,8 @@ class AudioDSPFilter:
         """
         Processes a float32 chunk:
         - Intelligent VAD: protects speech formants from polluting stationary noise profile.
-        - Subtracts stationary background noise spectrum.
-        - Applies 85 Hz to 3500 Hz bandpass filter.
-        - Applies spectral noise gate during quiet periods.
+        - Applies 85 Hz to 3500 Hz Hann bandpass filter (eliminates desk rumble, AC hum, and high hiss).
+        - Tracks stationary noise floor cleanly during non-speech periods.
         - Returns (clean_arr, clean_ac_rms, harmonic_density).
         """
         if len(arr) != self.chunk_samples:
@@ -140,22 +139,20 @@ class AudioDSPFilter:
         # Intelligent Voice Activity Detection for Stationary Noise Floor Tracking:
         # Stationary noise estimation MUST NEVER be updated with speech formants or loud transients,
         # otherwise speech is subtracted from itself and suppressed!
-        is_chunk_speech = is_speech or (self.noise_calibrated and (hd_raw >= 0.16 or rms_raw > noise_rms * 1.35))
+        is_chunk_speech = is_speech or (self.noise_calibrated and (hd_raw >= 0.12 or rms_raw > max(noise_rms * 1.35, 90.0)))
 
         if not is_chunk_speech:
             if not self.noise_calibrated:
-                self.update_noise(mag, alpha=0.2)
-            else:
-                self.update_noise(mag, alpha=0.03)
+                self.update_noise(mag, alpha=0.15)
+            elif rms_raw < noise_rms * 1.20:
+                self.update_noise(mag, alpha=0.02)
 
-        # Spectral subtraction: remove stationary ambient noise
-        sub_mag = np.maximum(mag - self.oversubtraction * self.noise_profile, self.spectral_floor * mag)
-        # Bandpass filter (85 Hz to 3500 Hz)
-        bp_mag = sub_mag * self.bp_mask
+        # Apply 85 Hz to 3500 Hz Hann bandpass filter (clean acoustic focus, zero distortion)
+        bp_mag = mag * self.bp_mask
 
-        # Spectral noise gating during non-speech periods to clamp ambient reverberation
-        if not is_chunk_speech and rms_raw < noise_rms * 1.35:
-            bp_mag = bp_mag * 0.35
+        # Apply gentle stationary noise reduction during quiet non-speech periods only
+        if not is_chunk_speech and self.noise_calibrated:
+            bp_mag = np.maximum(bp_mag - 0.70 * (self.noise_profile * self.bp_mask), 0.15 * bp_mag)
 
         clean_X = bp_mag * np.exp(1j * phase)
         clean_arr = np.fft.irfft(clean_X, n=self.chunk_samples)
@@ -545,6 +542,8 @@ class NativeSpeechRecognizer:
         t = re.sub(r"\b(israel|isra|asra|esra|azra|ezrah)\b", "Ezra", t, flags=re.IGNORECASE)
         # Antigravity homophones: antique gravity / anti gravity / the gravity -> antigravity
         t = re.sub(r"\b(antique gravity|anti gravity|the gravity)\b", "antigravity", t, flags=re.IGNORECASE)
+        # Spotify homophones & mishearings (e.g. "snow for", "star snow", "spot of tea", "spot if i")
+        t = re.sub(r"\b(?:start\s+)?(?:snow\s+for|star[,\s]+snow|spot\s+of\s+tea|spot\s+if\s+i|sportify|spotity|spot\s+a\s+file)\b", "spotify", t, flags=re.IGNORECASE)
         # Arabic phonetic Ezra:
         t = re.sub(r"\b(عزرة|إسراء|اسراء|اسرا|عزرائيل|ابو عزرا|يا عزرا)\b", "عزرا", t)
         # Known desktop control corrections
@@ -833,11 +832,11 @@ class NativeSpeechRecognizer:
                 try:
                     if select.select([sys.stdin], [], [], 0)[0]:
                         try:
-                            os.read(sys.stdin.fileno(), 1024)
+                            ch = os.read(sys.stdin.fileno(), 1024)
+                            if is_speaking and any(b in ch for b in (b'\n', b'\r', b' ')):
+                                break
                         except Exception:
                             pass
-                        if is_speaking:
-                            break
                 except Exception:
                     pass
 
@@ -902,7 +901,7 @@ class NativeSpeechRecognizer:
                         files={"file": (os.path.basename(audio_path), f, "audio/wav")},
                         data={
                             "model": "whisper-large-v3-turbo",
-                            "prompt": "Ezra, British English, mate, innit, cheers, sir, developer, code, news"
+                            "prompt": "Ezra, Spotify, YouTube, Antigravity, terminal, Brave, Chrome, VS Code, British English, mate, innit, cheers, sir, developer, code, news"
                         },
                         timeout=3.5
                     )
@@ -944,7 +943,7 @@ class NativeSpeechRecognizer:
                     best_of=2,
                     temperature=0.0,
                     condition_on_previous_text=False,
-                    initial_prompt="Ezra, British English, mate, innit, cheers, sir, developer, code, news"
+                    initial_prompt="Ezra, Spotify, YouTube, Antigravity, terminal, Brave, Chrome, VS Code, British English, mate, innit, cheers, sir, developer, code, news"
                 )
                 whisper_text = " ".join([s.text for s in segments]).strip()
                 if whisper_text and len(whisper_text) > 1 and whisper_text not in (".", "...", "!", "?"):

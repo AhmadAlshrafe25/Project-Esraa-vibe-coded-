@@ -122,6 +122,9 @@ class LocalNeuralTTS:
             ],
         )
 
+        self._kokoro_attempted = False
+        self._piper_attempted = False
+
         # Lazy load engines on first use or background init
         self._init_engines_async()
 
@@ -146,8 +149,9 @@ class LocalNeuralTTS:
     def _load_kokoro(self) -> bool:
         if self._kokoro is not None:
             return True
+        self._kokoro_attempted = True
         if not self.kokoro_model_path or not self.kokoro_voices_path:
-            logger.warning("Kokoro model files not found: model=%s, voices=%s", self.kokoro_model_path, self.kokoro_voices_path)
+            logger.debug("Kokoro model files not found: model=%s, voices=%s", self.kokoro_model_path, self.kokoro_voices_path)
             return False
         try:
             import kokoro_onnx
@@ -163,15 +167,16 @@ class LocalNeuralTTS:
             logger.info("Kokoro-82M neural TTS loaded successfully.")
             return True
         except Exception as e:
-            logger.error("Failed to load Kokoro-82M: %s", e)
+            logger.debug("Failed to load Kokoro-82M: %s", e)
             self._kokoro = None
             return False
 
     def _load_piper(self) -> bool:
         if self._piper is not None:
             return True
+        self._piper_attempted = True
         if not self.piper_model_path:
-            logger.warning("Piper model file not found: model=%s", self.piper_model_path)
+            logger.debug("Piper model file not found: model=%s", self.piper_model_path)
             return False
         try:
             import piper
@@ -185,16 +190,16 @@ class LocalNeuralTTS:
             logger.info("Piper Arabic neural TTS loaded successfully.")
             return True
         except Exception as e:
-            logger.error("Failed to load Piper Arabic: %s", e)
+            logger.debug("Failed to load Piper Arabic: %s", e)
             self._piper = None
             return False
 
     def is_available(self) -> bool:
         """Returns True if at least one local neural model (Kokoro or Piper) is loaded and ready."""
         with self._lock:
-            if self._kokoro is None:
+            if self._kokoro is None and not self._kokoro_attempted:
                 self._load_kokoro()
-            if self._piper is None:
+            if self._piper is None and not self._piper_attempted:
                 self._load_piper()
             return (self._kokoro is not None) or (self._piper is not None)
 

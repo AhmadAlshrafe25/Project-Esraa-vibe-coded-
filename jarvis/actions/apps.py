@@ -832,15 +832,15 @@ class AppManager:
             if res.returncode == 0:
                 return {"status": "success", "message": f"Launched {app_name} via desktop entry."}
 
-        # 4. Try generic xdg-open if user passed a file or path
-        if os.path.exists(app_name):
-            subprocess.Popen(
-                ["xdg-open", app_name],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True
-            )
-            return {"status": "success", "message": f"Opened file {app_name} with default handler."}
+        # 5. Web app fallback for common services (Spotify, YouTube)
+        if app_clean in ("spotify", "music", "سبوتيفاي"):
+            from jarvis.actions.browser import BrowserManager
+            BrowserManager.open_url("https://open.spotify.com")
+            return {"status": "success", "message": "Launched Spotify Web Player."}
+        if app_clean in ("youtube", "يوتيوب"):
+            from jarvis.actions.browser import BrowserManager
+            BrowserManager.open_url("https://youtube.com")
+            return {"status": "success", "message": "Opened YouTube."}
 
         return {"status": "error", "message": f"Application '{app_name}' not found on system."}
 

@@ -280,9 +280,10 @@ def continuous_conversation_loop():
 
                 # In dwell mode: ignore guest or far-field voices if not addressed to Ezra
                 if loop_state["is_awake"] and tier in ("guest", "unsure") and not has_wake:
-                    print(f"\033[1;30m[Biometric Near-Field Gate]: Suppressed unaddressed background voice: \"{transcription}\" ({detail})\033[0m")
-                    broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
-                    continue
+                    if not voice_dna.is_near_field_speaker(pcm_data):
+                        print(f"\033[1;30m[Biometric Near-Field Gate]: Suppressed unaddressed background voice: \"{transcription}\" ({detail})\033[0m")
+                        broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
+                        continue
 
                 # Always display captured transcription so user has visual feedback
                 print(f"\n\033[1;34m[Heard]:\033[0m \"{transcription}\" \033[1;30m(Tier: {tier})\033[0m")

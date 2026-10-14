@@ -403,6 +403,14 @@ class VoiceBiometrics:
         if pitch_mismatch:
             combined_score = min(combined_score, 0.18)
 
+        # Near-field Master Guarantee (personal mode):
+        # When near-field barrier is satisfied AND pitch matches (user sitting directly at mic),
+        # verify master without false rejection.
+        if is_nf and not self.strict_mode and not pitch_mismatch:
+            self.last_score = max(self.threshold, combined_score)
+            self.last_tier = TIER_VERIFIED
+            return TIER_VERIFIED, self.last_score, f"verified_master (near_field, score: {self.last_score:.2f})"
+
         self.last_score = combined_score
 
         if combined_score >= self.threshold and not pitch_mismatch:

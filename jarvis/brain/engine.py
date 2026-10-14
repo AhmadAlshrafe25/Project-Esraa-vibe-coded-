@@ -1503,7 +1503,10 @@ class BrainEngine:
                     res_raw = await self.execute_tool(tool_name, args, user_context=user_message)
                     res_obj = json.loads(res_raw)
                     executed_tools.append({"tool": tool_name, "result": res_obj})
-                    if isinstance(res_obj, dict) and tool_name == "get_top_processes" and res_obj.get("summary"):
+                    if isinstance(res_obj, dict) and res_obj.get("status") == "error":
+                        err_msg = res_obj.get("message", f"Could not perform {desc}")
+                        speech_summaries.append(err_msg)
+                    elif isinstance(res_obj, dict) and tool_name == "get_top_processes" and res_obj.get("summary"):
                         speech_summaries.append(f"Top processes are {res_obj['summary']}")
                     elif isinstance(res_obj, dict) and tool_name == "get_system_status" and res_obj.get("status") == "success":
                         speech_summaries.append(f"CPU at {res_obj.get('cpu_percent', '--')}, RAM at {res_obj.get('ram_used_gb', '--')}, battery at {res_obj.get('battery', '--')}")
@@ -1513,8 +1516,11 @@ class BrainEngine:
                     executed_tools.append({"tool": tool_name, "error": str(e)})
 
             if speech_summaries:
-                joined_desc = " and ".join(speech_summaries)
-                reply_speech = f"{joined_desc} for you, sir." if not has_ar else f"تم تنفيذ: {joined_desc} يا سيدي."
+                joined_desc = " and ".join(speech_summaries).rstrip(".")
+                if any("not found" in s.lower() or "could not" in s.lower() or "failed" in s.lower() for s in speech_summaries):
+                    reply_speech = f"{joined_desc}, sir." if not has_ar else f"{joined_desc} يا سيدي."
+                else:
+                    reply_speech = f"{joined_desc} for you, sir." if not has_ar else f"تم تنفيذ: {joined_desc} يا سيدي."
             else:
                 reply_speech = "All actions completed, sir."
 
@@ -1966,8 +1972,10 @@ class BrainEngine:
                     "tool_calls": [{"tool": "open_tab", "result": res}]
                 }
             elif target_to_open not in ("the", "this", "tab", "browser", "folder", "downloads", "documents", "pictures", "notes", "todos", "project"):
-                res = AppManager.launch_app(target_to_open)
-                speech = f"جاري تشغيل {target_to_open} يا سيدي." if has_ar else f"Launching {target_to_open} for you, sir."
+                if res.get("status") == "error":
+                    speech = f"لم أتمكن من العثور على تطبيق باسم {target_to_open} يا سيدي." if has_ar else f"I couldn't find an application named '{target_to_open}' on your system, sir."
+                else:
+                    speech = f"جاري تشغيل {target_to_open} يا سيدي." if has_ar else f"Launching {target_to_open} for you, sir."
                 return {
                     "speech_text": speech,
                     "tool_calls": [{"tool": "launch_app", "result": res}]
