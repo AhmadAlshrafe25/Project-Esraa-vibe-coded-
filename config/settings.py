@@ -22,8 +22,8 @@ VOICE_MUTED = os.getenv("VOICE_MUTED", "False").lower() in ("true", "1", "yes")
 ROBOTIC_VOICE = os.getenv("ROBOTIC_VOICE", "False").lower() in ("true", "1", "yes")
 
 # Musa Turn-Taking & Silence Endpointing Specification
-END_SIL = float(os.getenv("END_SIL", "1.6"))                      # 1.6s pause after >1.2s speech before Ezra takes turn
-SHORT_SIL = float(os.getenv("SHORT_SIL", "0.9"))                  # 0.9s pause after <1.2s short reply (e.g. 'yes', 'okay')
+END_SIL = float(os.getenv("END_SIL", "2.4"))                      # 2.4s pause after >1.2s speech before Ezra takes turn
+SHORT_SIL = float(os.getenv("SHORT_SIL", "1.8"))                  # 1.8s pause after short replies before Ezra takes turn
 MAX_UTT = float(os.getenv("MAX_UTT", "60.0"))                     # 60s max continuous utterance hard cap
 MIN_SPEECH = float(os.getenv("MIN_SPEECH", "0.35"))               # 0.35s minimum speech accepted; shorter discarded as noise
 PRE_BUFFER_SEC = float(os.getenv("PRE_BUFFER_SEC", "0.40"))       # 0.40s pre-speech ring buffer so opening consonant is never cut

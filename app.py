@@ -265,6 +265,21 @@ def continuous_conversation_loop():
                         broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Standby"})
                     continue
 
+                # Acoustic Self-Echo Filter: Suppress transcription if it echoes Ezra's own last spoken reply
+                last_ezra_text = (getattr(voice_speaker, "last_spoken_text", "") or "").lower().strip()
+                t_low = transcription.lower().strip()
+                if last_ezra_text and len(t_low) > 3:
+                    last_words = set(re.findall(r"\w+", last_ezra_text))
+                    heard_words = set(re.findall(r"\w+", t_low))
+                    overlap = len(last_words & heard_words) / max(1, len(heard_words))
+                    if overlap >= 0.55 or t_low in last_ezra_text or last_ezra_text in t_low:
+                        print(f"\033[1;30m[Acoustic Echo Filter]: Suppressed self-echo of Ezra's own voice: \"{transcription}\"\033[0m")
+                        if loop_state["is_awake"]:
+                            broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
+                        else:
+                            broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Standby"})
+                        continue
+
                 has_wake, wake_cmd = check_wake_word(transcription)
 
                 # Musa Setting: Answer only when I say "Ezra"
@@ -333,6 +348,8 @@ def continuous_conversation_loop():
                         broadcast_ui_event({"type": "speech", "speaker": "EZRA", "text": greet})
                         broadcast_ui_event({"type": "state_change", "state": "speaking", "detail": "Wake greeting"})
                         voice_speaker.speak(greet, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
+                        if hasattr(stt_engine, "worker") and stt_engine.worker:
+                            stt_engine.worker.drain(keep_recent=0)
                         broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
                         print("\033[1;36m[🎙️ Go ahead — I'm listening]\033[0m\n")
                 else:
@@ -344,11 +361,15 @@ def continuous_conversation_loop():
                         broadcast_ui_event({"type": "speech", "speaker": "EZRA", "text": "Right beside you, sir."})
                         broadcast_ui_event({"type": "state_change", "state": "speaking", "detail": "Affirmation"})
                         voice_speaker.speak("Right beside you, sir.", prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
+                        if hasattr(stt_engine, "worker") and stt_engine.worker:
+                            stt_engine.worker.drain(keep_recent=0)
                         broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
                         print("\033[1;36m[🎙️ Go ahead — I'm listening]\033[0m\n")
                         continue
 
                     turn_res = asyncio.run(handle_turn(actual_query, speaker_tier=tier))
+                    if hasattr(stt_engine, "worker") and stt_engine.worker:
+                        stt_engine.worker.drain(keep_recent=0)
                     if isinstance(turn_res, dict) and turn_res.get("rejected"):
                         # Dwell window does NOT refresh on rejected turn!
                         broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Rejected"})

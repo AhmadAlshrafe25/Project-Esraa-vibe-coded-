@@ -64,6 +64,8 @@ class SmoothSpeaker:
         self._current_sound = None
         self._lock = threading.RLock()
         self.local_tts = LocalNeuralTTS()
+        self.last_spoken_text: str = ""
+        self.last_speech_end_time: float = 0.0
 
     def set_robotic_mode(self, enabled: bool):
         """Switches between Cybernetic Robotic voice and Silky Neural voice."""
@@ -553,6 +555,7 @@ class SmoothSpeaker:
             print(f"{clean_p}{clean_text}", flush=True)
 
         # Persistent lock engages before first chunk begins
+        self.last_spoken_text = clean_text
         self.is_speaking = True
         self.is_interrupted = False
         try:
@@ -617,11 +620,12 @@ class SmoothSpeaker:
             return not self.is_interrupted
 
         finally:
-            # Persistent lock tail: 200ms room reverberation grace period before releasing lock
+            # Persistent lock tail: 250ms room reverberation grace period before releasing lock
             if not self.is_interrupted:
-                time.sleep(0.20)
+                time.sleep(0.25)
 
             self.is_speaking = False
+            self.last_speech_end_time = time.time()
             try:
                 from jarvis.ui.visuals import status_bar
                 status_bar.stop_speaking()

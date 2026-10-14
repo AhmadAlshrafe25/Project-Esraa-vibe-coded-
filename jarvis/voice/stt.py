@@ -317,8 +317,18 @@ class AudioStreamWorker:
             try:
                 from jarvis.voice.speaker import voice_speaker
                 is_ezra_speaking = getattr(voice_speaker, "is_speaking", False)
+                last_end = getattr(voice_speaker, "last_speech_end_time", 0.0)
+                # 650ms acoustic & PipeWire buffer decay tail
+                if not is_ezra_speaking and (time.time() - last_end < 0.65):
+                    is_ezra_speaking = True
             except Exception:
                 pass
+
+            if is_ezra_speaking:
+                # Discard Ezra's own voice so she never hears or answers herself
+                with self.lock:
+                    self.buffer.clear()
+                continue
 
             clean_bytes, ac_rms, harmonic_d = self._calc_rms_and_clean(raw, is_speech=False)
 
@@ -605,8 +615,8 @@ class NativeSpeechRecognizer:
         while not self.worker.calibrated and time.time() < calib_deadline:
             time.sleep(0.02)
 
-        # Drain stale audio chunks from before listening began (keeping at most pre_chunks_count)
-        self.worker.drain(keep_recent=pre_chunks_count)
+        # Drain all previous audio chunks so Ezra never hears past sounds or her own voice
+        self.worker.drain(keep_recent=0)
 
         # Immediate mic handover: render live mic indicator instantly!
         status_bar.render_listening(level=0, is_heard=False)
@@ -682,7 +692,7 @@ class NativeSpeechRecognizer:
                 # - Headset: high proximity, clean signal, zero laptop fan interference -> 2.2x baseline (min 150)
                 # - Laptop Mic: ambient fan noise and room reverberation -> adaptive baseline tracking with 1.8x multiplier (min 120)
                 if is_speaker_active:
-                    speech_threshold = max(baseline * (2.8 if is_headset else 2.4) + 40.0, 220.0)
+                    speech_threshold = max(baseline * (3.5 if is_headset else 4.5) + 200.0, 650.0)
                 elif is_headset:
                     speech_threshold = max(baseline * 2.2, 150.0)
                 else:
