@@ -692,11 +692,9 @@ class BrainEngine:
         headers = {"Authorization": f"Bearer {self.groq_key}"}
         models = [
             "qwen/qwen3.8-27b",
-            "openai/gpt-oss-120b",
-            "openai/gpt-oss-20b",
             "allam-2-7b",
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant"
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b"
         ]
 
         recent = memory_service.get_recent_history(8)

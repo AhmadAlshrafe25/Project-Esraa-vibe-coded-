@@ -14,6 +14,7 @@ import subprocess
 from collections import deque
 from pathlib import Path
 import speech_recognition as sr
+import requests
 import numpy as np
 from config.settings import (
     CACHE_DIR,
@@ -880,37 +881,60 @@ class NativeSpeechRecognizer:
 
         raw_transcription = ""
 
-        # Tier 1: Cloud Google Speech Recognition (Instantaneous, unmatched accuracy for spoken conversational English & Arabic)
-        try:
-            with sr.AudioFile(audio_path) as source:
-                audio_data = self.recognizer.record(source)
-                try:
-                    # Multi-language auto-detect / English first
-                    g_res = self.recognizer.recognize_google(audio_data)
-                    if g_res and len(g_res.strip()) > 1:
-                        raw_transcription = g_res.strip()
-                except Exception:
-                    pass
+        # Tier 1: Cloud Groq Whisper Large v3 Turbo (Ultra-fast ~180ms, state-of-the-art multilingual accuracy)
+        groq_key = os.getenv("GROQ_API_KEY")
+        if groq_key:
+            try:
+                with open(audio_path, "rb") as f:
+                    resp = requests.post(
+                        "https://api.groq.com/openai/v1/audio/transcriptions",
+                        headers={"Authorization": f"Bearer {groq_key}"},
+                        files={"file": (os.path.basename(audio_path), f, "audio/wav")},
+                        data={
+                            "model": "whisper-large-v3-turbo",
+                            "prompt": "Ezra, British English, mate, innit, cheers, Arabic, مرحبا عزرا"
+                        },
+                        timeout=3.5
+                    )
+                    if resp.status_code == 200:
+                        gw_text = (resp.json().get("text") or "").strip()
+                        if gw_text and len(gw_text) > 1 and gw_text not in (".", "...", "!", "?"):
+                            raw_transcription = gw_text
+            except Exception:
+                pass
 
-                # If generic didn't match, try UK English explicitly
-                if not raw_transcription:
+        # Tier 2: Cloud Google Speech Recognition (Instantaneous, unmatched accuracy for spoken conversational English & Arabic)
+        if not raw_transcription:
+            try:
+                with sr.AudioFile(audio_path) as source:
+                    audio_data = self.recognizer.record(source)
                     try:
-                        g_gb = self.recognizer.recognize_google(audio_data, language="en-GB")
-                        if g_gb and len(g_gb.strip()) > 1:
-                            raw_transcription = g_gb.strip()
+                        # Multi-language auto-detect / English first
+                        g_res = self.recognizer.recognize_google(audio_data)
+                        if g_res and len(g_res.strip()) > 1:
+                            raw_transcription = g_res.strip()
                     except Exception:
                         pass
 
-                # If English didn't match, try Arabic
-                if not raw_transcription:
-                    try:
-                        g_ar = self.recognizer.recognize_google(audio_data, language="ar-SA")
-                        if g_ar and len(g_ar.strip()) > 1:
-                            raw_transcription = g_ar.strip()
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                    # If generic didn't match, try UK English explicitly
+                    if not raw_transcription:
+                        try:
+                            g_gb = self.recognizer.recognize_google(audio_data, language="en-GB")
+                            if g_gb and len(g_gb.strip()) > 1:
+                                raw_transcription = g_gb.strip()
+                        except Exception:
+                            pass
+
+                    # If English didn't match, try Arabic
+                    if not raw_transcription:
+                        try:
+                            g_ar = self.recognizer.recognize_google(audio_data, language="ar-SA")
+                            if g_ar and len(g_ar.strip()) > 1:
+                                raw_transcription = g_ar.strip()
+                        except Exception:
+                            pass
+            except Exception:
+                pass
 
         # Tier 2: Local Whisper Neural Model (Robust local fallback when internet or Google API is unreachable)
         if not raw_transcription and self.whisper_model:
