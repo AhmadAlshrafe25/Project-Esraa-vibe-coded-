@@ -891,8 +891,52 @@ class NativeSpeechRecognizer:
 
         raw_transcription = ""
 
-        # Tier 1: Local Whisper Neural Model (100% offline, private, zero API dependencies)
-        if self.whisper_model:
+        # Tier 1: Cloud Groq Whisper Large v3 Turbo (State-of-the-art Large-v3 neural accuracy, ~180ms)
+        groq_key = os.getenv("GROQ_API_KEY")
+        if groq_key:
+            try:
+                with open(audio_path, "rb") as f:
+                    resp = requests.post(
+                        "https://api.groq.com/openai/v1/audio/transcriptions",
+                        headers={"Authorization": f"Bearer {groq_key}"},
+                        files={"file": (os.path.basename(audio_path), f, "audio/wav")},
+                        data={
+                            "model": "whisper-large-v3-turbo",
+                            "prompt": "Ezra, British English, mate, innit, cheers, sir, developer, code, news"
+                        },
+                        timeout=3.5
+                    )
+                    if resp.status_code == 200:
+                        gw_text = (resp.json().get("text") or "").strip()
+                        if gw_text and len(gw_text) > 1 and gw_text not in (".", "...", "!", "?"):
+                            raw_transcription = gw_text
+            except Exception:
+                pass
+
+        # Tier 2: Cloud Google Speech Recognition (Instantaneous British & US English recognition)
+        if not raw_transcription:
+            try:
+                with sr.AudioFile(audio_path) as source:
+                    audio_data = self.recognizer.record(source)
+                    try:
+                        g_res = self.recognizer.recognize_google(audio_data, language="en-GB")
+                        if g_res and len(g_res.strip()) > 1:
+                            raw_transcription = g_res.strip()
+                    except Exception:
+                        pass
+
+                    if not raw_transcription:
+                        try:
+                            g_us = self.recognizer.recognize_google(audio_data, language="en-US")
+                            if g_us and len(g_us.strip()) > 1:
+                                raw_transcription = g_us.strip()
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        # Tier 3: Local Whisper Neural Model (Local offline fallback when internet is down)
+        if not raw_transcription and self.whisper_model:
             try:
                 segments, info = self.whisper_model.transcribe(
                     audio_path,
@@ -900,67 +944,11 @@ class NativeSpeechRecognizer:
                     best_of=2,
                     temperature=0.0,
                     condition_on_previous_text=False,
-                    initial_prompt="Ezra, British English, innit, mate, bruv, cheers, Arabic, مرحبا عزرا"
+                    initial_prompt="Ezra, British English, mate, innit, cheers, sir, developer, code, news"
                 )
                 whisper_text = " ".join([s.text for s in segments]).strip()
                 if whisper_text and len(whisper_text) > 1 and whisper_text not in (".", "...", "!", "?"):
                     raw_transcription = whisper_text
-            except Exception:
-                pass
-
-        # Tier 2: Cloud Groq Whisper Large v3 Turbo (High-accuracy cloud fallback when local model misses)
-        if not raw_transcription:
-            groq_key = os.getenv("GROQ_API_KEY")
-            if groq_key:
-                try:
-                    with open(audio_path, "rb") as f:
-                        resp = requests.post(
-                            "https://api.groq.com/openai/v1/audio/transcriptions",
-                            headers={"Authorization": f"Bearer {groq_key}"},
-                            files={"file": (os.path.basename(audio_path), f, "audio/wav")},
-                            data={
-                                "model": "whisper-large-v3-turbo",
-                                "prompt": "Ezra, British English, mate, innit, cheers, Arabic, مرحبا عزرا"
-                            },
-                            timeout=3.5
-                        )
-                        if resp.status_code == 200:
-                            gw_text = (resp.json().get("text") or "").strip()
-                            if gw_text and len(gw_text) > 1 and gw_text not in (".", "...", "!", "?"):
-                                raw_transcription = gw_text
-                except Exception:
-                    pass
-
-        # Tier 3: Cloud Google Speech Recognition (Free web speech recognizer fallback)
-        if not raw_transcription:
-            try:
-                with sr.AudioFile(audio_path) as source:
-                    audio_data = self.recognizer.record(source)
-                    try:
-                        # Multi-language auto-detect / English first
-                        g_res = self.recognizer.recognize_google(audio_data)
-                        if g_res and len(g_res.strip()) > 1:
-                            raw_transcription = g_res.strip()
-                    except Exception:
-                        pass
-
-                    # If generic didn't match, try UK English explicitly
-                    if not raw_transcription:
-                        try:
-                            g_gb = self.recognizer.recognize_google(audio_data, language="en-GB")
-                            if g_gb and len(g_gb.strip()) > 1:
-                                raw_transcription = g_gb.strip()
-                        except Exception:
-                            pass
-
-                    # If English didn't match, try Arabic
-                    if not raw_transcription:
-                        try:
-                            g_ar = self.recognizer.recognize_google(audio_data, language="ar-SA")
-                            if g_ar and len(g_ar.strip()) > 1:
-                                raw_transcription = g_ar.strip()
-                        except Exception:
-                            pass
             except Exception:
                 pass
 

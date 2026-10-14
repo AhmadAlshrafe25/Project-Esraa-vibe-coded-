@@ -963,6 +963,21 @@ class BrainEngine:
         Returns response dict if handled, or None if cognitive AI reasoning is needed.
         """
         msg = user_message.lower().strip()
+
+        # Instant Direct Execution: Developer & Tech News
+        if any(k in msg for k in ("dev news", "developer news", "tech news", "technology news", "hacker news", "coding news", "software news")) or (("news" in msg) and any(kw in msg for kw in ("dev", "developer", "tech", "code", "coding", "software"))):
+            res = api_manager.get_tech_news(limit=3)
+            articles = res.get("articles", [])
+            if articles:
+                titles = ". ".join([a.get("title", "") for a in articles if a.get("title")])
+                speech = f"Here are the top developer news stories, sir: {titles}."
+            else:
+                speech = "Could not fetch developer news at the moment, sir."
+            return {
+                "speech_text": speech,
+                "tool_calls": [{"tool": "get_tech_news", "result": res}]
+            }
+
         # Pure information-seeking questions require generative AI reasoning
         question_starters = ("what is ", "what are ", "who is ", "who was ", "why is ", "why are ", "why do ", "how does ", "explain ", "summarize ", "write me ")
         if any(msg.startswith(qs) for qs in question_starters) and not any(k in msg for k in ("hogging", "memory", "ram", "status", "battery")):

@@ -183,14 +183,8 @@ def continuous_conversation_loop():
 
     from config.settings import ANSWER_ONLY_ON_WAKE, PUSH_TO_TALK, END_SIL, SHORT_SIL, MAX_UTT, HOST, PORT
 
-    # Launch background Holographic UI server & interface window
-    try:
-        from jarvis.ui.server import start_ui_server_thread, open_ui_in_browser
-        start_ui_server_thread(host=HOST, port=PORT)
-        open_ui_in_browser(host=HOST, port=PORT)
-        print(f"\033[1;32m[+] Holographic UI:\033[0m Online at http://{HOST}:{PORT}")
-    except Exception as ui_err:
-        print(f"\033[1;33m[!] UI Server Notice:\033[0m {ui_err}")
+    # Run 100% in pure terminal mode (UI browser popups disabled per user request)
+    pass
 
     print("\n\033[1;32m╔═══════════════════════════════════════════════════════════════╗\033[0m")
     print("\033[1;32m║          ⚡ HANDS-FREE INTELLIGENT CONVERSATION ENGINE        ║\033[0m")

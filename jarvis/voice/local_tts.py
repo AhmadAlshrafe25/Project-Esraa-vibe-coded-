@@ -242,22 +242,9 @@ class LocalNeuralTTS:
             return b"", KOKORO_SAMPLE_RATE
 
         clean_text = text.strip()
-        has_arabic = self.is_arabic(clean_text)
 
         with self._lock:
-            # 1. Arabic routing -> Piper TTS
-            if has_arabic:
-                if self._piper is None and not self._load_piper():
-                    raise RuntimeError("Piper Arabic TTS engine is not available.")
-                chunks = list(self._piper.synthesize(clean_text))
-                if not chunks:
-                    return b"", PIPER_SAMPLE_RATE
-                # Concatenate all chunk arrays
-                audio_floats = np.concatenate([c.audio_float_array for c in chunks if len(c.audio_float_array) > 0])
-                sr = chunks[0].sample_rate
-                return apply_anti_clipping_dsp(audio_floats, sr)
-
-            # 2. English / British routing -> Kokoro-82M
+            # High-fidelity British English Neural TTS via Kokoro-82M
             if self._kokoro is None and not self._load_kokoro():
                 raise RuntimeError("Kokoro-82M ONNX TTS engine is not available.")
 

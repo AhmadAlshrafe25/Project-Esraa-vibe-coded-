@@ -489,13 +489,12 @@ class SmoothSpeaker:
     def _prepare_audio_file(self, text: str) -> str:
         """Synthesizes or retrieves cached audio file for fallback paths."""
         clean_text = text.strip()[:400]
-        has_arabic = bool(re.search(r"[\u0600-\u06FF]", clean_text))
-        voices_to_try = ["ar-JO-SanaNeural", "ar-EG-SalmaNeural"] if has_arabic else [self.voice, self.fallback_voice]
+        voices_to_try = [self.voice, self.fallback_voice]
 
         audio_file = ""
         for v in voices_to_try:
             try:
-                target_v = "en-GB-RyanNeural" if (self.robotic_mode and not has_arabic) else v
+                target_v = "en-GB-RyanNeural" if self.robotic_mode else v
                 cache_key = hashlib.md5(f"{target_v}_{clean_text}_{self.robotic_mode}".encode("utf-8")).hexdigest()[:12]
                 cached_file = CACHE_DIR / f"smooth_{cache_key}.mp3"
                 if cached_file.exists() and cached_file.stat().st_size > 500:
@@ -546,8 +545,7 @@ class SmoothSpeaker:
         if not sentences:
             return True
 
-        has_arabic = bool(re.search(r"[\u0600-\u06FF]", clean_text))
-        self.last_language = "ar" if has_arabic else "en"
+        self.last_language = "en"
 
         # Print full response text once up front so user sees complete message immediately
         if live_print:
