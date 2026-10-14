@@ -25,6 +25,70 @@ class SystemManager:
         }
 
     @staticmethod
+    def get_time() -> dict:
+        """Returns the current formatted time."""
+        now = datetime.datetime.now().strftime("%I:%M %p")
+        return {"status": "success", "time": now, "speech": f"The current time is {now}, sir."}
+
+    @staticmethod
+    def get_date() -> dict:
+        """Returns today's date formatted."""
+        now = datetime.datetime.now().strftime("%A, %B %d, %Y")
+        return {"status": "success", "date": now, "speech": f"Today is {now}, sir."}
+
+    @staticmethod
+    def get_battery() -> dict:
+        """Returns battery percentage and power status."""
+        battery = psutil.sensors_battery()
+        if battery:
+            status = "charging" if battery.power_plugged else "on battery"
+            speech = f"Battery is at {int(battery.percent)} percent and {status}, sir."
+            return {"status": "success", "percent": int(battery.percent), "plugged": battery.power_plugged, "speech": speech}
+        return {"status": "success", "speech": "No battery detected, sir. Running on desktop AC power."}
+
+    @staticmethod
+    def get_ram() -> dict:
+        """Returns RAM utilization metrics."""
+        ram = psutil.virtual_memory()
+        speech = f"Memory usage is at {ram.percent} percent. {round(ram.used / (1024**3), 1)} of {round(ram.total / (1024**3), 1)} gigabytes in use, sir."
+        return {"status": "success", "percent": ram.percent, "used_gb": round(ram.used / (1024**3), 1), "total_gb": round(ram.total / (1024**3), 1), "speech": speech}
+
+    @staticmethod
+    def get_cpu() -> dict:
+        """Returns CPU utilization metric."""
+        cpu = psutil.cpu_percent(interval=0.1)
+        speech = f"CPU utilization is currently at {cpu} percent, sir."
+        return {"status": "success", "cpu_percent": cpu, "speech": speech}
+
+    @staticmethod
+    def read_clipboard() -> dict:
+        """Reads contents of system clipboard."""
+        try:
+            import pyperclip
+            text = pyperclip.paste().strip()
+            if not text:
+                return {"status": "success", "clipboard": "", "speech": "Your clipboard is currently empty, sir."}
+            preview = text[:200]
+            return {"status": "success", "clipboard": text, "speech": f"Clipboard contents: {preview}"}
+        except Exception as e:
+            return {"status": "error", "message": str(e), "speech": "Unable to read the clipboard, sir."}
+
+    @staticmethod
+    def summarize_clipboard() -> dict:
+        """Provides concise local extractive summary of clipboard content."""
+        try:
+            import pyperclip
+            text = pyperclip.paste().strip()
+            if not text:
+                return {"status": "success", "speech": "Your clipboard is empty, sir."}
+            clean_text = " ".join(text.split())
+            sentences = [p.strip() for p in clean_text.replace("?", ".").replace("!", ".").split(".") if p.strip()]
+            summary = ". ".join(sentences[:2]) + "." if sentences else clean_text[:200]
+            return {"status": "success", "summary": summary, "speech": f"Clipboard summary: {summary}"}
+        except Exception as e:
+            return {"status": "error", "message": str(e), "speech": "Could not summarize clipboard, sir."}
+
+    @staticmethod
     def set_volume(percent: int) -> dict:
         """Sets master audio volume on Arch Linux & Pop!_OS (WirePlumber/PulseAudio/ALSA)."""
         percent = max(0, min(100, percent))

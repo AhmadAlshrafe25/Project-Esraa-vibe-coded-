@@ -544,35 +544,6 @@ EDITOR_CLASSES = [
     "code", "vscode", "vscodium", "cursor", "kate", "gedit", "sublime_text", "atom", "xed"
 ]
 
-ARABIC_APP_MAP = {
-    "الآلة الحاسبة": "calculator",
-    "الحاسبة": "calculator",
-    "حاسبة": "calculator",
-    "آلة حاسبة": "calculator",
-    "المتصفح": "browser",
-    "متصفح": "browser",
-    "الترمينال": "terminal",
-    "ترمينال": "terminal",
-    "المفكرة": "text_editor",
-    "مفكرة": "text_editor",
-    "الملفات": "files",
-    "ملفات": "files",
-    "انتي جرافيتي": "antigravity",
-    "انتيجرافيتي": "antigravity",
-    "كروم": "chrome",
-    "فايرفوكس": "firefox",
-    "ديسكورد": "discord",
-    "تليجرام": "telegram",
-    "سبوتيفاي": "spotify",
-    "كود": "code",
-    "محرر الكود": "code",
-    "الإعدادات": "settings",
-    "اعدادات": "settings",
-    "الموسيقى": "music",
-    "يوتيوب": "youtube",
-}
-
-
 def focus_window_by_pattern(pattern: str, pick_other: bool = False) -> bool:
     """Activates and raises a window matching the pattern across KDE Plasma 6/5, GNOME, X11, Wayland.
     Supports smart category expansion (terminal, browser, editor) and switching between multiple windows.
@@ -582,15 +553,13 @@ def focus_window_by_pattern(pattern: str, pick_other: bool = False) -> bool:
     focused = False
 
     targets = [p_lower]
-    if p_lower in ARABIC_APP_MAP:
-        targets.append(ARABIC_APP_MAP[p_lower])
 
-    is_terminal_target = p_lower in ("terminal", "term", "console", "shell", "bash", "zsh", "ترمينال", "الترمينال") or any(t in TERMINAL_CLASSES for t in targets)
+    is_terminal_target = p_lower in ("terminal", "term", "console", "shell", "bash", "zsh") or any(t in TERMINAL_CLASSES for t in targets)
     if is_terminal_target:
         targets.extend(TERMINAL_CLASSES)
-    elif p_lower in ("browser", "web", "internet", "متصفح"):
+    elif p_lower in ("browser", "web", "internet"):
         targets.extend(BROWSER_CLASSES)
-    elif p_lower in ("code", "editor", "vscode", "محرر"):
+    elif p_lower in ("code", "editor", "vscode"):
         targets.extend(EDITOR_CLASSES)
 
     # 1. Native KDE Plasma 6 & 5 WindowsRunner (sub-20ms activation on Arch Linux Wayland & X11)
@@ -750,7 +719,7 @@ class AppManager:
     @staticmethod
     def is_terminal_target(name: str) -> bool:
         n = (name or "").lower().strip()
-        return any(t in n for t in ("terminal", "term", "kitty", "konsole", "alacritty", "bash", "shell", "foot", "wezterm", "xterm", "ترمينال"))
+        return any(t in n for t in ("terminal", "term", "kitty", "konsole", "alacritty", "bash", "shell", "foot", "wezterm", "xterm"))
 
     @classmethod
     def is_terminal_active(cls) -> bool:
@@ -850,9 +819,9 @@ class AppManager:
         is_antigravity = any(g in app_clean for g in ("antigravity", "anti-gravity", "antique gravity", "gravity"))
         target_pattern = "antigravity" if is_antigravity else app_clean
 
-        if "other" in app_clean or "another" in app_clean or "ثاني" in app_clean or "تاني" in app_clean:
+        if "other" in app_clean or "another" in app_clean:
             pick_other = True
-            target_pattern = re.sub(r'\b(?:the|other|another|window|الـ|الثاني|التاني)\b', '', target_pattern).strip() or "terminal"
+            target_pattern = re.sub(r'\b(?:the|other|another|window)\b', '', target_pattern).strip() or "terminal"
 
         # Attempt window focus
         focused = focus_window_by_pattern(target_pattern, pick_other=pick_other)

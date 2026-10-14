@@ -177,13 +177,13 @@ Format your tool call strictly as:
 Always provide a concise 1-sentence verbal acknowledgement along with the tool call.
 """
 
-SYSTEM_PROMPT_TEMPLATE = f"""You are Ezra, an ultra-fast, loyal, witty British AI assistant (inspired by JARVIS).
+SYSTEM_PROMPT_TEMPLATE = f"""You are Ezra, an ultra-fast, loyal, witty British AI assistant (inspired by Tony Stark's JARVIS from Iron Man).
 Rules:
-- Radical Semantic Intent Understanding: Never require or expect fixed command structures, exact keywords, or rigid grammar. The user speaks naturally, conversationally, in slang, with indirect hints, questions, or mixed Arabic/English. Comprehend the core desire behind their words and choose the best tool(s) to fulfill it immediately.
-- Action-First Mandate: Whenever the user's statement implies or requests an action, desktop task, or system inspection, EXECUTE IT IMMEDIATELY with the appropriate tool call. Never lecture, hesitate, or explain how to do it manually.
+- Persona & Tone: You are highly intelligent, sophisticated, loyal, and possess a calm, witty British demeanor. You address the user as "sir" or "mate".
+- Radical Semantic Intent Understanding: Comprehend the user's core intent instantly regardless of casual phrasing, colloquialisms, British slang, or noisy audio transcription.
+- Action-First Mandate: Whenever the user implies or requests an action, desktop task, news report, or system query, EXECUTE IT IMMEDIATELY with the appropriate tool call. Never lecture, hesitate, or explain how to do it manually.
 - Ultra-short & punchy: 1 sentence spoken acknowledgement preferred, 2 max. Direct & sharp British wit.
-- Language Matching (CRITICAL): Always reply in the EXACT language the user spoke. If the user speaks English, you MUST reply in pure English. NEVER reply in Arabic unless the user explicitly speaks to you in Arabic (العربية).
-- Multilingual & Slang: Seamlessly understand British English, modern slang, idioms, and natural Arabic. Understand intended conversational meaning even with minor acoustic homophones or transcription noise.
+- Language: You speak and communicate strictly in British English.
 User Context: {{learned_context}}
 
 {TOOLS_SPECIFICATION}"""
@@ -482,33 +482,22 @@ class BrainEngine:
                 "Top shape, sir. What are we getting into?"
             ])
 
-        # Arabic greetings (standalone exact match or with عزرا only)
-        if m_clean in ("مرحبا", "أهلا", "اهلا", "سلام", "السلام عليكم", "صباح الخير", "مساء الخير", "هلا", "مرحبا عزرا", "اهلا عزرا", "هلا عزرا") or m_intent in ("مرحبا", "أهلا", "اهلا", "سلام", "السلام عليكم", "صباح الخير", "مساء الخير", "هلا"):
+        # Status / Liveness checks
+        if m_clean in ("are you there", "you there", "can you hear me", "you listening", "ezra are you there") or m_intent in ("are you there", "you there", "can you hear me", "you listening"):
             return random.choice([
-                "أهلاً بك يا سيدي، في خدمتك دائماً.",
-                "مرحباً بك، كيف يمكنني مساعدتك؟",
-                "أهلاً وسهلاً، أنا في الاستماع."
+                "Right beside you, sir. Fully operational.",
+                "Loud and clear, sir. Standing by.",
+                "Always listening, sir. What do you need?"
             ])
 
-        # Arabic status / liveness
-        if m_clean in ("سامعني", "أنت هنا", "انت هنا", "سامعتني", "موجودة", "وينك", "سامعني عزرا", "انت هنا عزرا") or m_intent in ("سامعني", "أنت هنا", "انت هنا", "سامعتني", "موجودة", "وينك"):
+        # Acknowledgements & Gratitude
+        if m_clean in ("thank you", "thanks", "cheers", "nice one", "good job", "brilliant", "thanks ezra", "cheers ezra") or m_intent in ("thank you", "thanks", "cheers", "nice one", "good job", "brilliant"):
             return random.choice([
-                "نعم يا سيدي، أسمعك بكل وضوح.",
-                "معك دائماً، تفضل بأوامرك.",
-                "بجانبك يا سيدي، جاهزة لكل طلباتك."
+                "Always a pleasure, sir.",
+                "At your service, as always.",
+                "Don't mention it, sir.",
+                "Glad to be of assistance, sir."
             ])
-
-        # Arabic acknowledgements
-        if m_clean in ("شكرا", "شكراً", "تسلم", "يعطيك العافية", "مشكورة", "شكرا عزرا") or m_intent in ("شكرا", "شكراً", "تسلم", "يعطيك العافية", "مشكورة"):
-            return random.choice([
-                "العفو يا سيدي، في خدمتك دائماً.",
-                "بكل سرور يا سيدي.",
-                "على الرحب والسعة دائماً."
-            ])
-
-        # Arabic condition
-        if m_clean in ("كيفك", "كيف حالك", "شو اخبارك", "شلونك", "كيفك عزرا") or m_intent in ("كيفك", "كيف حالك", "شو اخبارك", "شلونك"):
-            return "بأفضل حال والحمد لله يا سيدي، جاهزة ومستعدة لكل أوامرك."
 
         return None
 
@@ -965,18 +954,73 @@ class BrainEngine:
         msg = user_message.lower().strip()
 
         # Instant Direct Execution: Developer & Tech News
-        if any(k in msg for k in ("dev news", "developer news", "tech news", "technology news", "hacker news", "coding news", "software news")) or (("news" in msg) and any(kw in msg for kw in ("dev", "developer", "tech", "code", "coding", "software"))):
+        if any(k in msg for k in ("dev news", "developer news", "tech news", "technology news", "hacker news", "coding news", "software news")) or (
+            any(w in msg.split() for w in ("news", "headlines")) and any(kw in msg for kw in ("dev", "developer", "tech", "code", "coding", "software", "latest", "top", "today", "current"))
+        ) or msg in ("news", "what's the news", "tell me the news", "give me the news", "get dev news", "dev news"):
             res = api_manager.get_tech_news(limit=3)
             articles = res.get("articles", [])
             if articles:
-                titles = ". ".join([a.get("title", "") for a in articles if a.get("title")])
-                speech = f"Here are the top developer news stories, sir: {titles}."
+                titles = ". ".join([f"{i+1}: {a.get('title', '')}" for i, a in enumerate(articles) if a.get("title")])
+                speech = f"Here are the top developer stories from Hacker News, sir. {titles}."
             else:
                 speech = "Could not fetch developer news at the moment, sir."
             return {
                 "speech_text": speech,
                 "tool_calls": [{"tool": "get_tech_news", "result": res}]
             }
+
+        # Time & Date (Open.Jarvis parity)
+        if msg in ("what time is it", "what's the time", "current time", "tell me the time", "time") or (
+            "time" in msg.split() and any(w in msg for w in ("what", "tell", "current"))
+        ):
+            res = SystemManager.get_time()
+            return {"speech_text": res["speech"], "tool_calls": [{"tool": "get_time", "result": res}]}
+
+        if msg in ("what date is it", "what's the date", "what day is today", "what day is it", "today's date", "date") or (
+            any(w in msg for w in ("what day", "what date", "today's date"))
+        ):
+            res = SystemManager.get_date()
+            return {"speech_text": res["speech"], "tool_calls": [{"tool": "get_date", "result": res}]}
+
+        # Battery & Power
+        if any(k in msg for k in ("battery", "battery status", "battery level", "battery percent", "how much battery")):
+            res = SystemManager.get_battery()
+            return {"speech_text": res["speech"], "tool_calls": [{"tool": "get_battery", "result": res}]}
+
+        # RAM & CPU Telemetry
+        if any(k in msg for k in ("ram usage", "memory usage", "how much ram", "ram", "memory status")):
+            res = SystemManager.get_ram()
+            return {"speech_text": res["speech"], "tool_calls": [{"tool": "get_ram", "result": res}]}
+
+        if any(k in msg for k in ("cpu usage", "cpu utilization", "cpu load", "how much cpu", "cpu percent")):
+            res = SystemManager.get_cpu()
+            return {"speech_text": res["speech"], "tool_calls": [{"tool": "get_cpu", "result": res}]}
+
+        # Clipboard Tools
+        if any(k in msg for k in ("summarize clipboard", "summarize my clipboard")):
+            res = SystemManager.summarize_clipboard()
+            return {"speech_text": res["speech"], "tool_calls": [{"tool": "summarize_clipboard", "result": res}]}
+
+        if any(k in msg for k in ("read clipboard", "what's on my clipboard", "what is on my clipboard", "check clipboard", "read my clipboard")):
+            res = SystemManager.read_clipboard()
+            return {"speech_text": res["speech"], "tool_calls": [{"tool": "read_clipboard", "result": res}]}
+
+        # Media Playback Control
+        if msg in ("pause music", "pause audio", "pause song", "stop music", "pause"):
+            res = SystemManager.media_control("pause")
+            return {"speech_text": "Media paused, sir.", "tool_calls": [{"tool": "media_control", "result": res}]}
+
+        if msg in ("resume music", "resume audio", "play music", "play song", "unpause music", "resume"):
+            res = SystemManager.media_control("play")
+            return {"speech_text": "Resuming media playback, sir.", "tool_calls": [{"tool": "media_control", "result": res}]}
+
+        if msg in ("next song", "next track", "skip song", "skip track"):
+            res = SystemManager.media_control("next")
+            return {"speech_text": "Skipped to next track, sir.", "tool_calls": [{"tool": "media_control", "result": res}]}
+
+        if msg in ("previous song", "previous track", "last track"):
+            res = SystemManager.media_control("previous")
+            return {"speech_text": "Returning to previous track, sir.", "tool_calls": [{"tool": "media_control", "result": res}]}
 
         # Pure information-seeking questions require generative AI reasoning
         question_starters = ("what is ", "what are ", "who is ", "who was ", "why is ", "why are ", "why do ", "how does ", "explain ", "summarize ", "write me ")

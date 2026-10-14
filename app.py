@@ -37,16 +37,10 @@ async def handle_turn(text: str, speaker_tier: str = "verified") -> dict:
     clean = text.lower().strip()
     is_sleep_command = (
         clean in ("stop listening", "exit conversation", "quit conversation", "goodbye ezra", "bye ezra", "sleep ezra", "shut down", "go to sleep", "sleep", "be quiet")
-        or any(w in clean for w in ("اسكت", "نام", "توقف", "مع السلامة", "اخرس"))
     )
     if is_sleep_command:
-        import re
-        has_arabic = bool(re.search(r"[\u0600-\u06FF]", clean))
-        farewell = "حاضر يا سيدي، في وضع الاستعداد دائماً. اضغط ENTER للاستئناف." if has_arabic else "Understood. Pausing hands-free mode, sir. Press ENTER anytime to resume."
-        broadcast_ui_event({"type": "speech", "speaker": "EZRA", "text": farewell})
-        broadcast_ui_event({"type": "state_change", "state": "speaking", "detail": "Farewell"})
+        farewell = "Understood. Pausing hands-free mode, sir. Press ENTER anytime to resume."
         voice_speaker.speak(farewell, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
-        broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Standby"})
         return {"should_continue": False, "was_interrupted": False}
 
     print(f"\n\033[1;34m[You]:\033[0m {text}")
@@ -110,27 +104,19 @@ def run_voice_enrollment():
         print(f"\033[1;31m[-] Calibration error: {e}\033[0m\n")
 
 def check_wake_word(text: str) -> tuple:
-    """Checks if text begins with or contains a wake word (Ezra / عزرا) anywhere."""
+    """Checks if text begins with or contains a wake word (Ezra / Jarvis) anywhere."""
     import re
     if not text:
         return False, ""
     low = text.lower().strip()
 
-    # 1. Flexible English detection: 'Ezra', 'Hey Ezra', 'Hello Ezra', 'Ok Ezra' anywhere
-    m_en = re.search(r"\b(ezra|israel|esra|asra|azra|ezrah)\b", low, re.IGNORECASE)
+    # Flexible English detection: 'Ezra', 'Hey Ezra', 'Hello Ezra', 'Jarvis' anywhere
+    m_en = re.search(r"\b(ezra|israel|esra|asra|azra|ezrah|jarvis)\b", low, re.IGNORECASE)
     if m_en:
         # Strip wake word and conversational preamble
-        clean_cmd = re.sub(r"^(?:hey|hi|hello|ok|okay|yo)?\s*(?:ezra|israel|esra|asra|azra|ezrah)[\s,.:;]*", "", low, flags=re.IGNORECASE).strip()
+        clean_cmd = re.sub(r"^(?:hey|hi|hello|ok|okay|yo)?\s*(?:ezra|israel|esra|asra|azra|ezrah|jarvis)[\s,.:;]*", "", low, flags=re.IGNORECASE).strip()
         if not clean_cmd:
-            clean_cmd = re.sub(r"[\s,.:;]*(?:ezra|israel|esra|asra|azra|ezrah)\s*$", "", low, flags=re.IGNORECASE).strip()
-        return True, clean_cmd
-
-    # 2. Flexible Arabic detection: 'عزرا', 'يا عزرا', 'ابو عزرا' anywhere
-    m_ar = re.search(r"\b(عزرا|إسراء|اسراء|عزرائيل)\b", low)
-    if m_ar:
-        clean_cmd = re.sub(r"^(?:يا|ابو|أبو|أهلا|اهلا)?\s*(?:عزرا|إسراء|اسراء|عزرائيل)[\s,.:;]*", "", low).strip()
-        if not clean_cmd:
-            clean_cmd = re.sub(r"[\s,.:;]*(?:عزرا|إسراء|اسراء|عزرائيل)\s*$", "", low).strip()
+            clean_cmd = re.sub(r"[\s,.:;]*(?:ezra|israel|esra|asra|azra|ezrah|jarvis)\s*$", "", low, flags=re.IGNORECASE).strip()
         return True, clean_cmd
 
     return False, ""
@@ -140,8 +126,8 @@ def continuous_conversation_loop():
     Continuous conversation loop:
     1. Starts immediately ACTIVE (awake) because user pressed ENTER!
     2. Active 3-minute dwell window before auto-standby.
-    3. Flexible wake word reactivation ('Ezra' / 'عزرا').
-    4. Instant sleep command ('اسكت' / 'go to sleep').
+    3. Flexible wake word reactivation ('Ezra' / 'Jarvis').
+    4. Instant sleep command ('go to sleep' / 'sleep').
     """
     import re
     from jarvis.voice.biometrics import voice_dna
@@ -166,12 +152,8 @@ def continuous_conversation_loop():
         if getattr(stt_engine, "is_user_speaking", False):
             return
 
-        has_arabic = bool(getattr(voice_speaker, "last_language", "en") == "ar")
-        greet = "أهلاً بك يا سيدي، الأنظمة جاهزة ومستعدة." if has_arabic else "Welcome back, sir. Systems operational and listening."
-        broadcast_ui_event({"type": "speech", "speaker": "EZRA", "text": greet})
-        broadcast_ui_event({"type": "state_change", "state": "speaking", "detail": "Wake greeting"})
+        greet = "Welcome back, sir. Systems operational and listening."
         voice_speaker.speak(greet, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
-        broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
         # Drain microphone buffer after greeting so greeting acoustic residue is never recorded
         if hasattr(stt_engine, "worker") and stt_engine.worker:
             stt_engine.worker.drain(keep_recent=0)
@@ -190,14 +172,14 @@ def continuous_conversation_loop():
     print("\033[1;32m║          ⚡ HANDS-FREE INTELLIGENT CONVERSATION ENGINE        ║\033[0m")
     print("\033[1;32m╚═══════════════════════════════════════════════════════════════╝\033[0m")
     print("\033[1;36m[•] Active Mode:\033[0m Listening now! Speak freely (laptop mic active).")
-    print(f"\033[1;36m[•] Musa Timing:\033[0m {END_SIL}s quiet wait (>1.2s speech), {SHORT_SIL}s on short replies, {MAX_UTT:.0f}s max.")
+    print(f"\033[1;36m[•] Timing:\033[0m {END_SIL}s quiet wait (>1.2s speech), {SHORT_SIL}s on short replies, {MAX_UTT:.0f}s max.")
     if PUSH_TO_TALK:
         print("\033[1;33m[•] Push-To-Talk:\033[0m ENABLED (Hold key to talk, release to finish).")
     if ANSWER_ONLY_ON_WAKE:
-        print("\033[1;33m[•] Wake Only Mode:\033[0m ENABLED (Responds only to 'Ezra' / 'عزرا').")
+        print("\033[1;33m[•] Wake Only Mode:\033[0m ENABLED (Responds only to 'Ezra' / 'Jarvis').")
     print("\033[1;36m[•] Instant Wake:\033[0m Activates the second the laptop lid opens or wakes from sleep.")
     print("\033[1;36m[•] Dwell Window:\033[0m 25s conversational follow-up (enters quiet standby so colleague chats aren't overheard).")
-    print("\033[1;36m[•] Sleep Command:\033[0m Say \033[1;31m'go to sleep'\033[0m or \033[1;31m'اسكت'\033[0m to return to standby.")
+    print("\033[1;36m[•] Sleep Command:\033[0m Say \033[1;31m'go to sleep'\033[0m or \033[1;31m'stop listening'\033[0m to return to standby.")
     print("\033[1;36m[•] Interrupt:\033[0m Speak to interrupt, or tap ENTER/SPACE anytime.\n")
 
     # Immediate voice prompt so user knows Ezra is live
@@ -299,28 +281,22 @@ def continuous_conversation_loop():
                 clean_low = transcription.lower().strip()
                 is_sleep = (
                     clean_low in ("stop listening", "exit conversation", "sleep", "go to sleep", "sleep now", "be quiet", "shut down")
-                    or any(w in clean_low for w in ("اسكت", "نام", "توقف", "مع السلامة", "اخرس"))
                 )
                 if is_sleep:
                     loop_state["is_awake"] = False
-                    farewell = "حاضر يا سيدي، في وضع الاستعداد." if re.search(r"[\u0600-\u06FF]", clean_low) else "Entering standby, sir. Say 'Ezra' anytime to wake me."
-                    broadcast_ui_event({"type": "speech", "speaker": "EZRA", "text": farewell})
-                    broadcast_ui_event({"type": "state_change", "state": "speaking", "detail": "Entering standby"})
+                    farewell = "Entering standby, sir. Say 'Ezra' anytime to wake me."
                     voice_speaker.speak(farewell, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
-                    broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Standby"})
                     continue
 
                 if not loop_state["is_awake"]:
                     # In standby: check for wake word
                     if not has_wake:
-                        broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Standby"})
                         print(f"\033[1;33m[Standby Mode]:\033[0m Say 'Ezra' or tap ENTER to activate.")
                         continue
 
                     # Reject distant background or guest voices trying to wake Ezra from across the room
                     if tier == "guest":
                         print(f"\033[1;30m[Biometric Near-Field Gate]: Ignored wake word from background/guest source: \"{transcription}\" ({detail})\033[0m")
-                        broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Standby"})
                         continue
 
                     loop_state["is_awake"] = True
@@ -332,19 +308,13 @@ def continuous_conversation_loop():
                         loop_state["last_interaction_time"] = time.time()
                         if isinstance(turn_res, dict) and not turn_res.get("should_continue", True):
                             loop_state["is_awake"] = False
-                            broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Standby"})
                         else:
-                            broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
                             print("\033[1;36m[🎙️ Go ahead — I'm listening]\033[0m\n")
                     else:
-                        has_ar = bool(re.search(r"[\u0600-\u06FF]", transcription))
-                        greet = "أهلاً بك يا سيدي، في خدمتك دائماً." if has_ar else "Good day, sir. At your command."
-                        broadcast_ui_event({"type": "speech", "speaker": "EZRA", "text": greet})
-                        broadcast_ui_event({"type": "state_change", "state": "speaking", "detail": "Wake greeting"})
+                        greet = "Good day, sir. At your command."
                         voice_speaker.speak(greet, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
                         if hasattr(stt_engine, "worker") and stt_engine.worker:
                             stt_engine.worker.drain(keep_recent=0)
-                        broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
                         print("\033[1;36m[🎙️ Go ahead — I'm listening]\033[0m\n")
                 else:
                     # Currently awake (Active dwell mode)

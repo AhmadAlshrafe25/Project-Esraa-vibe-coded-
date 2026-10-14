@@ -50,9 +50,9 @@ class SmoothSpeaker:
     in-memory PCM playback, 5-tier fallback cascade, and zero robotic speech artifacts.
     """
 
-    def __init__(self, voice: str = "bf_isabella"):
-        self.voice = voice  # Natural British neural voice (bf_isabella / bf_emma)
-        self.fallback_voice = "en-GB-SoniaNeural"
+    def __init__(self, voice: str = "bm_george"):
+        self.voice = voice  # High-clarity British neural voice (bm_george / bf_isabella / bm_lewis)
+        self.fallback_voice = "en-GB-RyanNeural"  # Open.Jarvis Ryan British neural
         self.is_muted: bool = False
         self.is_speaking: bool = False
         self.is_interrupted: bool = False
@@ -417,11 +417,14 @@ class SmoothSpeaker:
         if out_path.exists() and out_path.stat().st_size > 500:
             return str(out_path)
 
+        is_ryan = "Ryan" in voice_name
+        rate_val = "-8%" if is_ryan else "+0%"
+        pitch_val = "-12Hz" if is_ryan else "+0Hz"
         communicate = edge_tts.Communicate(
             text=text,
             voice=voice_name,
-            rate="+6%",
-            pitch="+0Hz"
+            rate=rate_val,
+            pitch=pitch_val
         )
         await communicate.save(str(out_path))
         return str(out_path)
