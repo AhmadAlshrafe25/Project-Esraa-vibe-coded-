@@ -626,14 +626,10 @@ class BrainEngine:
         candidate_models = [
             "gemini-flash-lite-latest",
             "gemini-3.5-flash-lite",
-            "gemini-3.8-flash",
             "gemini-flash-latest",
+            "gemini-3.8-flash",
             "gemini-3.7-flash",
-            "gemini-3.5-flash",
-            "gemini-3.8-flash-lite-tts",
-            "gemini-3.8-flash-tts",
-            "gemini-robotics-er-2-preview",
-            "gemini-3.5-transcribe"
+            "gemini-3.5-flash"
         ]
         
         recent = memory_service.get_recent_history(8)

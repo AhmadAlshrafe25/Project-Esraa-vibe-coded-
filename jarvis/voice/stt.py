@@ -182,10 +182,26 @@ class AudioStreamWorker:
         self.ambient_baseline = 250.0
         self.calibrated = False
         self.proc = None
+        self.is_headset = False
+        self.last_device_name = ""
         self.dsp = AudioDSPFilter(sample_rate=self.sample_rate, chunk_samples=int(self.sample_rate * self.chunk_duration))
+        self._check_device_mode()
         self._start_capture()
         self.thread = threading.Thread(target=self._capture_loop, daemon=True)
         self.thread.start()
+
+    def _check_device_mode(self) -> bool:
+        """Auto-detects whether the active PipeWire audio source is a headset or internal laptop mic."""
+        try:
+            res = subprocess.run(["pactl", "get-default-source"], capture_output=True, text=True, timeout=0.8)
+            dev = res.stdout.strip()
+            if dev:
+                self.last_device_name = dev
+                self.is_headset = any(k in dev.lower() for k in ("bluez", "headset", "headphones", "bluetooth", "usb", "wireless"))
+                return self.is_headset
+        except Exception:
+            pass
+        return self.is_headset
 
     def _start_capture(self):
         """Spawns direct PipeWire/PulseAudio capture process with fallback to ALSA."""
@@ -202,6 +218,7 @@ class AudioStreamWorker:
 
         if shutil.which("parec"):
             try:
+                # Capture from current default source dynamically
                 self.proc = subprocess.Popen(
                     ["parec", "--rate=16000", "--channels=1", "--format=s16le", "--raw"],
                     stdout=subprocess.PIPE,
@@ -657,16 +674,19 @@ class NativeSpeechRecognizer:
                 except Exception:
                     pass
 
-                baseline = min(self.worker.ambient_baseline, 600.0)
+                baseline = min(self.worker.ambient_baseline, 800.0)
+                is_headset = getattr(self.worker, "is_headset", False)
 
-                # Speech threshold:
-                # Tuned for laptop mic (no headset): 2.0-2.5x above baseline is enough.
-                # Headset can afford 3-4x because it's pressed against the mouth.
+                # Dynamic Threshold Adaptation:
+                # - Headset: high proximity, clean signal, zero laptop fan interference -> 2.2x baseline (min 150)
+                # - Laptop Mic: ambient fan noise and room reverberation -> adaptive baseline tracking with 1.8x multiplier (min 120)
                 if is_speaker_active:
-                    # Slightly higher margin while Ezra speaks to avoid echo self-triggering
-                    speech_threshold = max(baseline * 2.5 + 40.0, 200.0)
+                    speech_threshold = max(baseline * (2.8 if is_headset else 2.4) + 40.0, 220.0)
+                elif is_headset:
+                    speech_threshold = max(baseline * 2.2, 150.0)
                 else:
-                    speech_threshold = max(baseline * 2.0, 130.0)
+                    # Laptop Mic with fan sound compensation
+                    speech_threshold = max(baseline * 1.8, 115.0)
 
                 # Dynamic VU Audio Meter: voice dynamically fills the bar
                 excess = max(0.0, ac_rms - baseline)
@@ -676,7 +696,9 @@ class NativeSpeechRecognizer:
                 # Check vocal harmonic density
                 samples_raw = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) if len(chunk) >= 2 else np.array([])
                 is_synthetic_mock = len(samples_raw) > 0 and np.all(samples_raw == 0) and ac_rms > 0
-                has_vocal_harmonics = is_synthetic_mock or (harmonic_density >= 0.09)
+                # Laptop mic with fan sound has lower harmonic purity (0.07 threshold); headset has high purity (0.12)
+                min_harmonic_gate = 0.12 if is_headset else 0.07
+                has_vocal_harmonics = is_synthetic_mock or (harmonic_density >= min_harmonic_gate)
 
                 if not is_speaking:
                     # ONSET DETECTION PHASE
