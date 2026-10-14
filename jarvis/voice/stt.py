@@ -309,7 +309,8 @@ class AudioStreamWorker:
                 self.ambient_baseline = min(600.0, 0.98 * self.ambient_baseline + 0.02 * ac_rms)
 
             with self.lock:
-                self.buffer.append((clean_bytes, ac_rms, harmonic_d))
+                # Store raw PCM so Whisper receives uncorrupted natural speech, with ac_rms/harmonic_d for VAD
+                self.buffer.append((raw, ac_rms, harmonic_d))
 
     def get_chunk(self):
         """Pulls oldest available chunk from buffer."""
@@ -827,7 +828,8 @@ class NativeSpeechRecognizer:
         is_synth_full = len(full_samples) > 0 and np.all(full_samples == 0)
         if not is_synth_full and len(full_samples) >= 320:
             full_harmonic_d = dsp.calc_harmonic_density(full_samples)
-            if full_harmonic_d < 0.14 and (harmonic_chunks_count / max(1, speech_chunks_count) < 0.20):
+            # Relaxed for laptop mic so valid speech is not discarded
+            if full_harmonic_d < 0.05 and (harmonic_chunks_count / max(1, speech_chunks_count) < 0.05):
                 return ""
 
         # Write clean 16000Hz 16-bit PCM WAV file
