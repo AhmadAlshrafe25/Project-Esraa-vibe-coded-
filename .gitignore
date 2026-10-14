@@ -40,6 +40,8 @@ token.json
 *.ogg
 cache/
 logs/
+models/
+.agents/
 
 # IDE
 .vscode/

@@ -6,6 +6,7 @@ from jarvis.brain.engine import brain_service
 from jarvis.voice.speaker import voice_speaker
 from jarvis.voice.stt import stt_engine
 from jarvis.memory import memory_service
+from jarvis.ui.server import broadcast_ui_event
 
 BANNER = """\033[1;36m
   ╔═══════════════════════════════════════════════════════════════╗
@@ -42,7 +43,10 @@ async def handle_turn(text: str, speaker_tier: str = "verified") -> dict:
         import re
         has_arabic = bool(re.search(r"[\u0600-\u06FF]", clean))
         farewell = "حاضر يا سيدي، في وضع الاستعداد دائماً. اضغط ENTER للاستئناف." if has_arabic else "Understood. Pausing hands-free mode, sir. Press ENTER anytime to resume."
+        broadcast_ui_event({"type": "speech", "speaker": "EZRA", "text": farewell})
+        broadcast_ui_event({"type": "state_change", "state": "speaking", "detail": "Farewell"})
         voice_speaker.speak(farewell, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
+        broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Standby"})
         return {"should_continue": False, "was_interrupted": False}
 
     print(f"\n\033[1;34m[You]:\033[0m {text}")
@@ -50,6 +54,7 @@ async def handle_turn(text: str, speaker_tier: str = "verified") -> dict:
     # Animated Futuristic Thinking Loading Bar
     from jarvis.ui.visuals import status_bar
     status_bar.start_thinking("Reasoning with AI...")
+    broadcast_ui_event({"type": "state_change", "state": "thinking", "detail": "Reasoning with AI..."})
     try:
         response = await brain_service.think(text, speaker_tier=speaker_tier)
     finally:
@@ -59,6 +64,7 @@ async def handle_turn(text: str, speaker_tier: str = "verified") -> dict:
     tools = response.get("tool_calls", [])
 
     if response.get("rejected"):
+        broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Rejected"})
         return {"should_continue": True, "rejected": True, "was_interrupted": False}
 
     if tools:
@@ -68,7 +74,10 @@ async def handle_turn(text: str, speaker_tier: str = "verified") -> dict:
 
     # Speak the reply with live typewriter and barge-in support
     prefix = "\033[1;35m[Ezra (Silent)]:\033[0m " if voice_speaker.is_muted else "\033[1;36m[Ezra]:\033[0m "
+    broadcast_ui_event({"type": "speech", "speaker": "EZRA", "text": reply_speech})
+    broadcast_ui_event({"type": "state_change", "state": "speaking", "detail": "Vocalizing..."})
     completed = voice_speaker.speak(reply_speech, prefix=prefix, live_print=True)
+    broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Standby"})
     return {"should_continue": True, "was_interrupted": not completed, "rejected": False}
 
 def run_voice_enrollment():
@@ -159,7 +168,10 @@ def continuous_conversation_loop():
 
         has_arabic = bool(getattr(voice_speaker, "last_language", "en") == "ar")
         greet = "أهلاً بك يا سيدي، الأنظمة جاهزة ومستعدة." if has_arabic else "Welcome back, sir. Systems operational and listening."
+        broadcast_ui_event({"type": "speech", "speaker": "EZRA", "text": greet})
+        broadcast_ui_event({"type": "state_change", "state": "speaking", "detail": "Wake greeting"})
         voice_speaker.speak(greet, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
+        broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
         # Drain microphone buffer after greeting so greeting acoustic residue is never recorded
         if hasattr(stt_engine, "worker") and stt_engine.worker:
             stt_engine.worker.drain(keep_recent=0)
@@ -195,7 +207,10 @@ def continuous_conversation_loop():
     print("\033[1;36m[•] Interrupt:\033[0m Speak to interrupt, or tap ENTER/SPACE anytime.\n")
 
     # Immediate voice prompt so user knows Ezra is live
+    broadcast_ui_event({"type": "speech", "speaker": "EZRA", "text": "I'm listening, sir. Speak freely."})
+    broadcast_ui_event({"type": "state_change", "state": "speaking", "detail": "Initial greeting"})
     voice_speaker.speak("I'm listening, sir. Speak freely.", prefix="\033[1;36m[Ezra]:\033[0m ", live_print=True)
+    broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
 
     from jarvis.ui.visuals import status_bar
 
@@ -205,10 +220,13 @@ def continuous_conversation_loop():
                 # Check dwell timeout if currently awake
                 if loop_state["is_awake"] and (time.time() - loop_state["last_interaction_time"] > DWELL_TIMEOUT_SEC):
                     loop_state["is_awake"] = False
+                    broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Standby"})
                     print(f"\n\033[1;33m[Standby Mode]:\033[0m Standing by (Say 'Ezra' anytime to wake me).\n")
 
                 # Instant Mic Handover: render live mic indicator immediately!
                 status_bar.render_listening(level=0, is_heard=False)
+                if loop_state["is_awake"]:
+                    broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
 
                 # Record turn from microphone using Musa's exact turn-taking & silence endpointing architecture
                 audio_file = stt_engine.record_until_finished(
@@ -220,6 +238,7 @@ def continuous_conversation_loop():
                     continue
 
                 status_bar.start_thinking("Processing voice...")
+                broadcast_ui_event({"type": "state_change", "state": "thinking", "detail": "Processing voice..."})
                 transcription = stt_engine.transcribe_audio_file(audio_file)
                 status_bar.stop_thinking()
 
@@ -230,12 +249,20 @@ def continuous_conversation_loop():
 
                 if not transcription or not transcription.strip():
                     # Ambient tick or empty sound
+                    if loop_state["is_awake"]:
+                        broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
+                    else:
+                        broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Standby"})
                     continue
 
                 # Ambient TV, broadcast, and non-directed room chatter filter
                 if stt_engine.is_ambient_chatter(transcription):
                     # Do not refresh dwell interaction time on ambient chatter!
                     print(f"\033[1;30m[Acoustic Filter]: Suppressed ambient chatter / TV dialogue: \"{transcription}\"\033[0m")
+                    if loop_state["is_awake"]:
+                        broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
+                    else:
+                        broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Standby"})
                     continue
 
                 has_wake, wake_cmd = check_wake_word(transcription)
@@ -243,15 +270,21 @@ def continuous_conversation_loop():
                 # Musa Setting: Answer only when I say "Ezra"
                 if ANSWER_ONLY_ON_WAKE and not has_wake:
                     print(f"\033[1;30m[Wake Filter]: Ignored speech without wake word (ANSWER_ONLY_ON_WAKE=True): \"{transcription}\"\033[0m")
+                    if loop_state["is_awake"]:
+                        broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
+                    else:
+                        broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Standby"})
                     continue
 
                 # In dwell mode: ignore guest or far-field voices if not addressed to Ezra
                 if loop_state["is_awake"] and tier in ("guest", "unsure") and not has_wake:
                     print(f"\033[1;30m[Biometric Near-Field Gate]: Suppressed unaddressed background voice: \"{transcription}\" ({detail})\033[0m")
+                    broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
                     continue
 
                 # Always display captured transcription so user has visual feedback
                 print(f"\n\033[1;34m[Heard]:\033[0m \"{transcription}\" \033[1;30m(Tier: {tier})\033[0m")
+                broadcast_ui_event({"type": "user_speech", "text": transcription})
 
                 # Check if sleep command
                 clean_low = transcription.lower().strip()
@@ -262,18 +295,23 @@ def continuous_conversation_loop():
                 if is_sleep:
                     loop_state["is_awake"] = False
                     farewell = "حاضر يا سيدي، في وضع الاستعداد." if re.search(r"[\u0600-\u06FF]", clean_low) else "Entering standby, sir. Say 'Ezra' anytime to wake me."
+                    broadcast_ui_event({"type": "speech", "speaker": "EZRA", "text": farewell})
+                    broadcast_ui_event({"type": "state_change", "state": "speaking", "detail": "Entering standby"})
                     voice_speaker.speak(farewell, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
+                    broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Standby"})
                     continue
 
                 if not loop_state["is_awake"]:
                     # In standby: check for wake word
                     if not has_wake:
+                        broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Standby"})
                         print(f"\033[1;33m[Standby Mode]:\033[0m Say 'Ezra' or tap ENTER to activate.")
                         continue
 
                     # Reject distant background or guest voices trying to wake Ezra from across the room
                     if tier == "guest":
                         print(f"\033[1;30m[Biometric Near-Field Gate]: Ignored wake word from background/guest source: \"{transcription}\" ({detail})\033[0m")
+                        broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Standby"})
                         continue
 
                     loop_state["is_awake"] = True
@@ -285,12 +323,17 @@ def continuous_conversation_loop():
                         loop_state["last_interaction_time"] = time.time()
                         if isinstance(turn_res, dict) and not turn_res.get("should_continue", True):
                             loop_state["is_awake"] = False
+                            broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Standby"})
                         else:
+                            broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
                             print("\033[1;36m[🎙️ Go ahead — I'm listening]\033[0m\n")
                     else:
                         has_ar = bool(re.search(r"[\u0600-\u06FF]", transcription))
                         greet = "أهلاً بك يا سيدي، في خدمتك دائماً." if has_ar else "Good day, sir. At your command."
+                        broadcast_ui_event({"type": "speech", "speaker": "EZRA", "text": greet})
+                        broadcast_ui_event({"type": "state_change", "state": "speaking", "detail": "Wake greeting"})
                         voice_speaker.speak(greet, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
+                        broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
                         print("\033[1;36m[🎙️ Go ahead — I'm listening]\033[0m\n")
                 else:
                     # Currently awake (Active dwell mode)
@@ -298,20 +341,26 @@ def continuous_conversation_loop():
 
                     if has_wake and not wake_cmd:
                         loop_state["last_interaction_time"] = time.time()
+                        broadcast_ui_event({"type": "speech", "speaker": "EZRA", "text": "Right beside you, sir."})
+                        broadcast_ui_event({"type": "state_change", "state": "speaking", "detail": "Affirmation"})
                         voice_speaker.speak("Right beside you, sir.", prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
+                        broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
                         print("\033[1;36m[🎙️ Go ahead — I'm listening]\033[0m\n")
                         continue
 
                     turn_res = asyncio.run(handle_turn(actual_query, speaker_tier=tier))
                     if isinstance(turn_res, dict) and turn_res.get("rejected"):
                         # Dwell window does NOT refresh on rejected turn!
+                        broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Rejected"})
                         continue
 
                     loop_state["last_interaction_time"] = time.time()
                     should_continue = turn_res.get("should_continue", True) if isinstance(turn_res, dict) else turn_res
                     if not should_continue:
                         loop_state["is_awake"] = False
+                        broadcast_ui_event({"type": "state_change", "state": "idle", "detail": "Standby"})
                     else:
+                        broadcast_ui_event({"type": "state_change", "state": "listening", "detail": "Listening..."})
                         print("\033[1;36m[🎙️ Go ahead — I'm listening]\033[0m\n")
 
             except Exception as loop_err:
@@ -475,6 +524,7 @@ def main():
                 # Trigger continuous multi-turn hands-free conversation
                 continuous_conversation_loop()
             else:
+                broadcast_ui_event({"type": "user_speech", "text": user_choice})
                 asyncio.run(handle_turn(user_choice))
 
         except KeyboardInterrupt:

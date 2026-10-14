@@ -7,7 +7,7 @@ import threading
 import subprocess
 import shutil
 from pathlib import Path
-from typing import Set
+from typing import Set, Optional
 
 import psutil
 from aiohttp import web, WSMsgType
@@ -54,6 +54,7 @@ class EzraUIServer:
         self.current_state = "idle"  # 'idle' | 'listening' | 'thinking' | 'speaking'
         self.dwell_remaining = 25.0
         self._bg_task = None
+        self.loop = None
         self._setup_routes()
 
     def _setup_routes(self):
@@ -162,6 +163,8 @@ class EzraUIServer:
         }
 
     async def broadcast(self, msg: dict):
+        if isinstance(msg, dict) and msg.get("type") == "state_change" and "state" in msg:
+            self.current_state = msg["state"]
         if not self.ws_clients:
             return
         payload = json.dumps(msg)
@@ -248,18 +251,11 @@ class EzraUIServer:
 
     def _execute_action(self, action: str):
         if action == "open_antigravity":
-            return AppManager.open_app("antigravity")
+            return AppManager.launch_app("antigravity")
         elif action == "open_terminal":
-            return AppManager.open_terminal()
+            return AppManager.launch_app("terminal")
         elif action == "open_browser":
-            # Brave is installed as Flatpak (com.brave.Browser)
-            try:
-                import subprocess as _sp
-                _sp.Popen(["flatpak", "run", "com.brave.Browser"], start_new_session=True)
-                return "Brave launched"
-            except Exception:
-                browser = DEFAULT_BROWSER or "google-chrome"
-                return AppManager.open_app(browser)
+            return AppManager.launch_app("brave")
         elif action == "capture_screen":
             img = screen_vision.capture_screen()
             return "Screenshot captured successfully" if img else "Failed"
@@ -274,6 +270,56 @@ class EzraUIServer:
                     await self.broadcast(telem)
             except asyncio.CancelledError:
                 break
+            except Exception:
+                pass
+
+
+# Active UI Server Singleton references
+_active_ui_server: Optional[EzraUIServer] = None
+_active_ui_loop: Optional[asyncio.AbstractEventLoop] = None
+_server_lock = threading.Lock()
+
+
+def get_active_ui_server() -> Optional[EzraUIServer]:
+    """Returns the currently active EzraUIServer instance, if any."""
+    with _server_lock:
+        return _active_ui_server
+
+
+def set_active_ui_server(server: Optional[EzraUIServer], loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
+    """Registers or unregisters the active EzraUIServer instance and its event loop."""
+    global _active_ui_server, _active_ui_loop
+    with _server_lock:
+        _active_ui_server = server
+        _active_ui_loop = loop if loop is not None else (getattr(server, "loop", None) if server else None)
+
+
+def broadcast_ui_event(event_dict: dict) -> None:
+    """
+    Thread-safe broadcaster. If active EzraUIServer is running, schedules
+    server.broadcast(event_dict) onto server.loop via asyncio.run_coroutine_threadsafe.
+    Safe no-op if UI server is not started.
+    """
+    if not isinstance(event_dict, dict):
+        return
+    with _server_lock:
+        server = _active_ui_server
+        loop = _active_ui_loop
+
+    if server is not None:
+        if event_dict.get("type") == "state_change" and "state" in event_dict:
+            server.current_state = event_dict["state"]
+        if loop is not None and loop.is_running():
+            try:
+                try:
+                    current_loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    current_loop = None
+
+                if current_loop is loop:
+                    loop.create_task(server.broadcast(event_dict))
+                else:
+                    asyncio.run_coroutine_threadsafe(server.broadcast(event_dict), loop)
             except Exception:
                 pass
 
@@ -321,6 +367,9 @@ def run_ui_standalone():
     server = EzraUIServer(host=HOST, port=PORT)
 
     async def _start():
+        loop = asyncio.get_running_loop()
+        server.loop = loop
+        set_active_ui_server(server, loop)
         runner = web.AppRunner(server.app)
         await runner.setup()
         site = web.TCPSite(runner, server.host, server.port)
@@ -337,6 +386,8 @@ def run_ui_standalone():
         asyncio.run(_start())
     except (KeyboardInterrupt, SystemExit):
         print("\n\033[1;33m[!] Shutting down Ezra UI server cleanly.\033[0m")
+    finally:
+        set_active_ui_server(None, None)
 
 
 def start_ui_server_thread(host: str = "127.0.0.1", port: int = 8080):
@@ -345,6 +396,8 @@ def start_ui_server_thread(host: str = "127.0.0.1", port: int = 8080):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         server = EzraUIServer(host=host, port=port)
+        server.loop = loop
+        set_active_ui_server(server, loop)
 
         async def _run():
             app_runner = web.AppRunner(server.app)
@@ -355,7 +408,10 @@ def start_ui_server_thread(host: str = "127.0.0.1", port: int = 8080):
             while True:
                 await asyncio.sleep(3600)
 
-        loop.run_until_complete(_run())
+        try:
+            loop.run_until_complete(_run())
+        finally:
+            set_active_ui_server(None, None)
 
     t = threading.Thread(target=_runner, daemon=True, name="EzraUIServerThread")
     t.start()
