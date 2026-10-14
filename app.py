@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 import time
 import asyncio
 from jarvis.brain.engine import brain_service
@@ -37,9 +38,11 @@ async def handle_turn(text: str, speaker_tier: str = "verified") -> dict:
     clean = text.lower().strip()
     is_sleep_command = (
         clean in ("stop listening", "exit conversation", "quit conversation", "goodbye ezra", "bye ezra", "sleep ezra", "shut down", "go to sleep", "sleep", "be quiet")
+        or any(w in clean for w in ("اسكت", "نام", "توقف", "مع السلامة", "اخرس"))
     )
     if is_sleep_command:
-        farewell = "Understood. Pausing hands-free mode, sir. Press ENTER anytime to resume."
+        has_ar = bool(re.search(r"[\u0600-\u06FF]", clean))
+        farewell = "حاضر يا سيدي، في وضع الاستعداد." if has_ar else "Understood. Pausing hands-free mode, sir. Press ENTER anytime to resume."
         voice_speaker.speak(farewell, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
         return {"should_continue": False, "was_interrupted": False}
 
@@ -104,19 +107,27 @@ def run_voice_enrollment():
         print(f"\033[1;31m[-] Calibration error: {e}\033[0m\n")
 
 def check_wake_word(text: str) -> tuple:
-    """Checks if text begins with or contains a wake word (Ezra) anywhere."""
+    """Checks if text begins with or contains a wake word (Ezra / Jarvis / عزرا) anywhere."""
     import re
     if not text:
         return False, ""
     low = text.lower().strip()
 
-    # Flexible English detection: 'Ezra', 'Hey Ezra', 'Hello Ezra' anywhere
-    m_en = re.search(r"\b(ezra|israel|esra|asra|azra|ezrah)\b", low, re.IGNORECASE)
+    # 1. Flexible English detection: 'Ezra', 'Hey Ezra', 'Jarvis' anywhere
+    m_en = re.search(r"\b(ezra|israel|esra|asra|azra|ezrah|jarvis)\b", low, re.IGNORECASE)
     if m_en:
         # Strip wake word and conversational preamble
-        clean_cmd = re.sub(r"^(?:hey|hi|hello|ok|okay|yo)?\s*(?:ezra|israel|esra|asra|azra|ezrah)[\s,.:;]*", "", low, flags=re.IGNORECASE).strip()
+        clean_cmd = re.sub(r"^(?:hey|hi|hello|ok|okay|yo)?\s*(?:ezra|israel|esra|asra|azra|ezrah|jarvis)[\s,.:;]*", "", low, flags=re.IGNORECASE).strip()
         if not clean_cmd:
-            clean_cmd = re.sub(r"[\s,.:;]*(?:ezra|israel|esra|asra|azra|ezrah)\s*$", "", low, flags=re.IGNORECASE).strip()
+            clean_cmd = re.sub(r"[\s,.:;]*(?:ezra|israel|esra|asra|azra|ezrah|jarvis)\s*$", "", low, flags=re.IGNORECASE).strip()
+        return True, clean_cmd
+
+    # 2. Flexible Arabic detection: 'عزرا', 'يا عزرا', 'ابو عزرا' anywhere
+    m_ar = re.search(r"\b(عزرا|إسراء|اسراء|عزرائيل|جارفيس)\b", low)
+    if m_ar:
+        clean_cmd = re.sub(r"^(?:يا|ابو|أبو|أهلا|اهلا)?\s*(?:عزرا|إسراء|اسراء|عزرائيل|جارفيس)[\s,.:;]*", "", low).strip()
+        if not clean_cmd:
+            clean_cmd = re.sub(r"[\s,.:;]*(?:عزرا|إسراء|اسراء|عزرائيل|جارفيس)\s*$", "", low).strip()
         return True, clean_cmd
 
     return False, ""
@@ -281,10 +292,11 @@ def continuous_conversation_loop():
                 clean_low = transcription.lower().strip()
                 is_sleep = (
                     clean_low in ("stop listening", "exit conversation", "sleep", "go to sleep", "sleep now", "be quiet", "shut down")
+                    or any(w in clean_low for w in ("اسكت", "نام", "توقف", "مع السلامة", "اخرس"))
                 )
                 if is_sleep:
                     loop_state["is_awake"] = False
-                    farewell = "Entering standby, sir. Say 'Ezra' anytime to wake me."
+                    farewell = "حاضر يا سيدي، في وضع الاستعداد." if re.search(r"[\u0600-\u06FF]", clean_low) else "Entering standby, sir. Say 'Ezra' anytime to wake me."
                     voice_speaker.speak(farewell, prefix="\n\033[1;36m[Ezra]:\033[0m ", live_print=True)
                     continue
 

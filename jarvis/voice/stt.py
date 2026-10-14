@@ -453,7 +453,7 @@ class NativeSpeechRecognizer:
         low = t.lower()
 
         # If explicitly addresses Ezra or contains wake word, NEVER reject
-        if re.search(r"\b(ezra|israel|esra|asra|azra|ezrah)\b", low):
+        if re.search(r"\b(ezra|israel|esra|asra|azra|ezrah|jarvis|عزرا|إسراء|اسراء|عزرائيل)\b", low):
             return False
 
         # 1. Ambient room chatter / speaking to family, kids, colleagues (not directed at assistant)
@@ -464,6 +464,8 @@ class NativeSpeechRecognizer:
             r"\b(it\'s my turn|not your turn|leave me alone|don\'t touch that|let\'s play|come play with me|look at me|tag you\'re it)\b",
             r"\b(did you see that|did you see the email|are you on mute|can you hear me|can you see my screen|who are you talking to|what did you say)\b",
             r"\b(put on your shoes|are you leaving|see you tomorrow|see you later)\b",
+            r"\b(يا ماما|يا بابا|وين الأكل|تعال هون|شو بتعمل|بدنا نتغدا|شفت الأخبار|وين مفاتيحي|روح نام|يا ولد|اعطيني المي|يلا نتغدى)\b",
+            r"\b(دوري|دورك|هات اللعبة|سيبني|ابعد عني|ما بدي|تعال نلعب|شوفني|بدي العب|شفت الإيميل|انت ميوت|سامعني|مع مين عم تحكي|شو حكيت|ولا شي)\b",
         ]
         if any(re.search(p, low) for p in household_markers):
             return True
@@ -476,6 +478,7 @@ class NativeSpeechRecognizer:
             r"\b(previously on|season finale|in tonight\'s episode|new episode|welcome to the stream)\b",
             r"\b(welcome back to the show|touchdown|halftime|sponsor|sponsored by|buy now|call now|limited time offer)\b",
             r"\b(final score|scores|kickoff|championship|super bowl|world cup|penalty kick)\b",
+            r"\b(اشترك في القناة|فاصل ونواصل|إلى اللقاء في الحلقة القادمة|نشرة الأخبار|أهلاً بكم مشاهدينا|عاجل|برعاية|تابعونا|في حلقة اليوم|تقرير خاص)\b",
         ]
         if any(re.search(p, low) for p in tv_markers):
             return True
@@ -483,6 +486,7 @@ class NativeSpeechRecognizer:
         # 3. Third-person gossip/dialogue markers ('he said that', 'she told him', etc.)
         gossip_markers = [
             r"^(and then he was like|and then she said|he told me that|she said that|they were talking about)\b",
+            r"^(وقال لي|وقالت لي|كانوا عم يحكوا|عم يحكي مع)\b",
         ]
         if any(re.search(p, low) for p in gossip_markers):
             return True
@@ -490,6 +494,7 @@ class NativeSpeechRecognizer:
         # 4. If clear desktop/system imperative directive, NEVER reject
         direct_patterns = [
             r"^(open|launch|close|kill|start|stop|pause|resume|play|mute|unmute|search|find|google|type|write|press|lock|set|run|git|add|clear|take|volume)\b",
+            r"^(افتح|افتحي|شغل|شغلي|اغلق|اغلقي|سكر|سكري|وقف|وقفي|ابحث|ابحثي|اكتب|اكتبي|علي|وطي|صور|صوري|قفل)\b",
         ]
         if any(re.search(p, low) for p in direct_patterns):
             return False
@@ -500,7 +505,8 @@ class NativeSpeechRecognizer:
             "yeah", "yep", "nope", "nah", "uh huh", "mm hmm", "hmm yeah", "oh yeah", "yeah right",
             "right yeah", "haha", "hahaha", "hehe", "oh wow", "wow", "right right", "okay okay",
             "cool cool", "i see", "whatever", "no way", "you know", "you know what",
-            "yes yes", "sure sure", "fine fine", "aha", "mhm mhm"
+            "yes yes", "sure sure", "fine fine", "aha", "mhm mhm",
+            "ايوه", "اممم", "اه صح", "لا والله", "ماشي ماشي", "تمام تمام", "عادي يعني", "شو بعرفني", "يلا باي"
         }
         if low in filler_phrases:
             return True
@@ -513,6 +519,7 @@ class NativeSpeechRecognizer:
         - Filters isolated coughs, clicks, and fillers (uh, um, mm, er, yeah right, etc.)
         - Corrects acoustic homophones (Israel -> Ezra, antique gravity -> antigravity)
         - Corrects known desktop & app mishearings (e.g. control my temp -> control my tab)
+        - Normalizes Arabic phonetic variants (عزرائيل / اسراء -> عزرا)
         """
         if not text:
             return ""
@@ -525,7 +532,8 @@ class NativeSpeechRecognizer:
             "cough", "click", "eh", "mhm", "yeah", "yep", "nope", "nah", "uh huh", "mm hmm",
             "hmm yeah", "oh yeah", "yeah right", "right yeah", "haha", "hahaha", "hehe", "oh wow",
             "wow", "right right", "okay okay", "cool cool", "i see", "whatever", "no way",
-            "you know", "you know what"
+            "you know", "you know what", "ايوه", "اممم", "اه صح", "لا والله", "ماشي ماشي",
+            "تمام تمام", "عادي يعني", "شو بعرفني", "يلا باي"
         }
         if low in filler_tokens or low in NOISE_PHRASES:
             return ""
@@ -537,6 +545,8 @@ class NativeSpeechRecognizer:
         t = re.sub(r"\b(israel|isra|asra|esra|azra|ezrah)\b", "Ezra", t, flags=re.IGNORECASE)
         # Antigravity homophones: antique gravity / anti gravity / the gravity -> antigravity
         t = re.sub(r"\b(antique gravity|anti gravity|the gravity)\b", "antigravity", t, flags=re.IGNORECASE)
+        # Arabic phonetic Ezra:
+        t = re.sub(r"\b(عزرة|إسراء|اسراء|اسرا|عزرائيل|ابو عزرا|يا عزرا)\b", "عزرا", t)
         # Known desktop control corrections
         t = re.sub(r"\bcontrol my temp\b", "control my tab", t, flags=re.IGNORECASE)
         t = re.sub(r"\byou tube\b", "youtube", t, flags=re.IGNORECASE)
