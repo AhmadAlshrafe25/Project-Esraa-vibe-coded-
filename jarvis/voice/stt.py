@@ -858,8 +858,40 @@ class NativeSpeechRecognizer:
 
         raw_transcription = ""
 
-        # Tier 1: Local Whisper Neural Model (accurate British English, modern slang & Arabic)
-        if self.whisper_model:
+        # Tier 1: Cloud Google Speech Recognition (Instantaneous, unmatched accuracy for spoken conversational English & Arabic)
+        try:
+            with sr.AudioFile(audio_path) as source:
+                audio_data = self.recognizer.record(source)
+                try:
+                    # Multi-language auto-detect / English first
+                    g_res = self.recognizer.recognize_google(audio_data)
+                    if g_res and len(g_res.strip()) > 1:
+                        raw_transcription = g_res.strip()
+                except Exception:
+                    pass
+
+                # If generic didn't match, try UK English explicitly
+                if not raw_transcription:
+                    try:
+                        g_gb = self.recognizer.recognize_google(audio_data, language="en-GB")
+                        if g_gb and len(g_gb.strip()) > 1:
+                            raw_transcription = g_gb.strip()
+                    except Exception:
+                        pass
+
+                # If English didn't match, try Arabic
+                if not raw_transcription:
+                    try:
+                        g_ar = self.recognizer.recognize_google(audio_data, language="ar-SA")
+                        if g_ar and len(g_ar.strip()) > 1:
+                            raw_transcription = g_ar.strip()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Tier 2: Local Whisper Neural Model (Robust local fallback when internet or Google API is unreachable)
+        if not raw_transcription and self.whisper_model:
             try:
                 segments, info = self.whisper_model.transcribe(
                     audio_path,
@@ -872,29 +904,6 @@ class NativeSpeechRecognizer:
                 whisper_text = " ".join([s.text for s in segments]).strip()
                 if whisper_text and len(whisper_text) > 1:
                     raw_transcription = whisper_text
-            except Exception:
-                pass
-
-        # Tier 2: Cloud Google Speech Recognition Fallback (English / Arabic)
-        if not raw_transcription:
-            try:
-                with sr.AudioFile(audio_path) as source:
-                    audio_data = self.recognizer.record(source)
-                    # Try English (British/Slang)
-                    try:
-                        g_en = self.recognizer.recognize_google(audio_data, language="en-GB")
-                        if g_en and len(g_en.strip()) > 1:
-                            raw_transcription = g_en.strip()
-                    except Exception:
-                        pass
-                    # If English didn't match, try Arabic
-                    if not raw_transcription:
-                        try:
-                            g_ar = self.recognizer.recognize_google(audio_data, language="ar-SA")
-                            if g_ar and len(g_ar.strip()) > 1:
-                                raw_transcription = g_ar.strip()
-                        except Exception:
-                            pass
             except Exception:
                 pass
 
