@@ -1029,6 +1029,17 @@ class BrainEngine:
                 "tool_calls": [{"tool": "get_tech_news", "result": res}]
             }
 
+        # Privacy Mode Controls (Open.Jarvis parity)
+        if msg in ("enable privacy mode", "privacy mode on", "turn on privacy mode", "private mode on"):
+            from jarvis.memory import memory_service
+            memory_service.set_privacy_mode(True)
+            return {"speech_text": "Privacy mode engaged, sir. Persisted memory tracking and logging are suspended.", "tool_calls": []}
+
+        if msg in ("disable privacy mode", "privacy mode off", "turn off privacy mode", "private mode off"):
+            from jarvis.memory import memory_service
+            memory_service.set_privacy_mode(False)
+            return {"speech_text": "Privacy mode disabled, sir. Normal memory operations restored.", "tool_calls": []}
+
         # Time & Date
         if msg in ("what time is it", "what's the time", "current time", "tell me the time", "time") or (
             "time" in msg.split() and any(w in msg for w in ("what", "tell", "current"))

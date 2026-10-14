@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 import json
 import datetime
@@ -8,11 +9,27 @@ from config.settings import PROJECT_ROOT, GEMINI_API_KEY
 DB_PATH = PROJECT_ROOT / "data" / "memory.db"
 DB_PATH.parent.mkdir(exist_ok=True)
 
+def mask_secrets(text: str) -> str:
+    """Masks API keys, tokens, and private secrets before storing or exporting (Open.Jarvis parity)."""
+    if not text:
+        return text
+    # Mask Gemini / Groq / OpenAI keys and generic tokens
+    text = re.sub(r"\b(AIzaSy[a-zA-Z0-9_-]{33})\b", r"AIzaSy...[REDACTED]", text)
+    text = re.sub(r"\b(gsk_[a-zA-Z0-9]{48,})\b", r"gsk_...[REDACTED]", text)
+    text = re.sub(r"\b(ghp_[a-zA-Z0-9]{36,})\b", r"ghp_...[REDACTED]", text)
+    text = re.sub(r"\b([0-9]{8,12}:[a-zA-Z0-9_-]{35})\b", r"...[TELEGRAM_TOKEN_REDACTED]", text)
+    return text
+
 class MemoryManager:
     """Stores chat conversations, user preferences, and continuously adapts by learning from every turn."""
 
     def __init__(self):
+        self.privacy_mode: bool = False
         self._init_db()
+
+    def set_privacy_mode(self, enabled: bool):
+        """Enables or disables privacy mode (Open.Jarvis data control)."""
+        self.privacy_mode = bool(enabled)
 
     def _init_db(self):
         with sqlite3.connect(DB_PATH) as conn:
@@ -44,6 +61,9 @@ class MemoryManager:
             conn.commit()
 
     def save_message(self, sender: str, message: str, tools: list = None):
+        if self.privacy_mode:
+            return
+        safe_msg = mask_secrets(message)
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -52,12 +72,14 @@ class MemoryManager:
             """, (
                 datetime.datetime.now().isoformat(),
                 sender,
-                message,
+                safe_msg,
                 json.dumps(tools or [])
             ))
             conn.commit()
 
     def get_recent_history(self, limit: int = 15) -> list:
+        if self.privacy_mode:
+            return []
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -118,6 +140,9 @@ class MemoryManager:
 
     async def auto_learn_from_interaction(self, user_text: str, reply_text: str):
         """Asynchronously reflects on conversation to automatically extract corrections, habits, and preferences."""
+        if self.privacy_mode:
+            return
+
         raw_key = os.getenv("GEMINI_API_KEY", "") or GEMINI_API_KEY or ""
         gemini_key = raw_key.split(",")[0].strip() if raw_key else ""
         if not gemini_key or len(user_text.strip()) < 4:

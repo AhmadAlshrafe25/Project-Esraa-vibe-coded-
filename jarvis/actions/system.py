@@ -1,3 +1,5 @@
+import os
+import re
 import shutil
 import subprocess
 import psutil
@@ -115,12 +117,36 @@ class SystemManager:
                 return {"status": "success", "message": f"Media command '{action_clean}' executed."}
         return {"status": "warning", "message": f"playerctl not available or invalid action '{action}'."}
 
+    DANGEROUS_PATTERNS = [
+        r"\brm\s+-[rfRF]{1,4}\s+[/~]",
+        r"\bmkfs\b",
+        r"\bformat\b",
+        r"\bdd\s+if=.*of=/dev/",
+        r":\(\)\s*\{\s*:\|:&\s*\};:", # fork bomb
+        r">\s*/dev/sd[a-z]",
+        r">\s*/dev/nvme",
+        r"\bcurl\b.*\|\s*(?:ba)?sh\b",
+        r"\bwget\b.*\|\s*(?:ba)?sh\b"
+    ]
+
     @staticmethod
     def execute_shell_command(command: str) -> dict:
-        """Executes a safe shell command on user request and returns output."""
+        """Executes a safe shell command on user request with Open.Jarvis security validation."""
+        cmd_clean = (command or "").strip()
+        if not cmd_clean:
+            return {"status": "error", "message": "Empty command provided."}
+
+        # Open.Jarvis security hardening: block destructive command patterns
+        for p in SystemManager.DANGEROUS_PATTERNS:
+            if re.search(p, cmd_clean):
+                return {
+                    "status": "error",
+                    "message": f"Security violation: command rejected due to unsafe pattern '{p}'."
+                }
+
         try:
             # Run command with 10s timeout
-            res = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=10)
+            res = subprocess.run(cmd_clean, shell=True, capture_output=True, text=True, timeout=10)
             output = (res.stdout + res.stderr).strip()[:1000]
             return {
                 "status": "success" if res.returncode == 0 else "error",

@@ -11,12 +11,25 @@ class BrowserManager:
 
     @staticmethod
     def _launch_url_reliably(url: str):
-        """Launches a URL in the user's browser, silencing all GPU driver/stdout logs."""
+        """Launches a URL in the user's browser with Open.Jarvis protocol safety validation."""
+        clean_url = (url or "").strip()
+        if not clean_url:
+            return
+
+        # Open.Jarvis security hardening: block dangerous URL schemes
+        low_url = clean_url.lower()
+        if low_url.startswith(("javascript:", "data:", "powershell:", "cmd:")):
+            return
+
+        # Ensure valid web protocol or search
+        if not low_url.startswith(("http://", "https://")):
+            clean_url = f"https://{clean_url}"
+
         # 1. Try xdg-open directly (most reliable on modern Linux desktops)
         if shutil.which("xdg-open"):
             try:
                 subprocess.Popen(
-                    ["xdg-open", url],
+                    ["xdg-open", clean_url],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     start_new_session=True
