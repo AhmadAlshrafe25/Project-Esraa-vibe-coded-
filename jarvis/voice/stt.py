@@ -891,29 +891,47 @@ class NativeSpeechRecognizer:
 
         raw_transcription = ""
 
-        # Tier 1: Cloud Groq Whisper Large v3 Turbo (Ultra-fast ~180ms, state-of-the-art multilingual accuracy)
-        groq_key = os.getenv("GROQ_API_KEY")
-        if groq_key:
+        # Tier 1: Local Whisper Neural Model (100% offline, private, zero API dependencies)
+        if self.whisper_model:
             try:
-                with open(audio_path, "rb") as f:
-                    resp = requests.post(
-                        "https://api.groq.com/openai/v1/audio/transcriptions",
-                        headers={"Authorization": f"Bearer {groq_key}"},
-                        files={"file": (os.path.basename(audio_path), f, "audio/wav")},
-                        data={
-                            "model": "whisper-large-v3-turbo",
-                            "prompt": "Ezra, British English, mate, innit, cheers, Arabic, مرحبا عزرا"
-                        },
-                        timeout=3.5
-                    )
-                    if resp.status_code == 200:
-                        gw_text = (resp.json().get("text") or "").strip()
-                        if gw_text and len(gw_text) > 1 and gw_text not in (".", "...", "!", "?"):
-                            raw_transcription = gw_text
+                segments, info = self.whisper_model.transcribe(
+                    audio_path,
+                    beam_size=2,
+                    best_of=2,
+                    temperature=0.0,
+                    condition_on_previous_text=False,
+                    initial_prompt="Ezra, British English, innit, mate, bruv, cheers, Arabic, مرحبا عزرا"
+                )
+                whisper_text = " ".join([s.text for s in segments]).strip()
+                if whisper_text and len(whisper_text) > 1 and whisper_text not in (".", "...", "!", "?"):
+                    raw_transcription = whisper_text
             except Exception:
                 pass
 
-        # Tier 2: Cloud Google Speech Recognition (Instantaneous, unmatched accuracy for spoken conversational English & Arabic)
+        # Tier 2: Cloud Groq Whisper Large v3 Turbo (High-accuracy cloud fallback when local model misses)
+        if not raw_transcription:
+            groq_key = os.getenv("GROQ_API_KEY")
+            if groq_key:
+                try:
+                    with open(audio_path, "rb") as f:
+                        resp = requests.post(
+                            "https://api.groq.com/openai/v1/audio/transcriptions",
+                            headers={"Authorization": f"Bearer {groq_key}"},
+                            files={"file": (os.path.basename(audio_path), f, "audio/wav")},
+                            data={
+                                "model": "whisper-large-v3-turbo",
+                                "prompt": "Ezra, British English, mate, innit, cheers, Arabic, مرحبا عزرا"
+                            },
+                            timeout=3.5
+                        )
+                        if resp.status_code == 200:
+                            gw_text = (resp.json().get("text") or "").strip()
+                            if gw_text and len(gw_text) > 1 and gw_text not in (".", "...", "!", "?"):
+                                raw_transcription = gw_text
+                except Exception:
+                    pass
+
+        # Tier 3: Cloud Google Speech Recognition (Free web speech recognizer fallback)
         if not raw_transcription:
             try:
                 with sr.AudioFile(audio_path) as source:
@@ -943,23 +961,6 @@ class NativeSpeechRecognizer:
                                 raw_transcription = g_ar.strip()
                         except Exception:
                             pass
-            except Exception:
-                pass
-
-        # Tier 2: Local Whisper Neural Model (Robust local fallback when internet or Google API is unreachable)
-        if not raw_transcription and self.whisper_model:
-            try:
-                segments, info = self.whisper_model.transcribe(
-                    audio_path,
-                    beam_size=3,
-                    best_of=3,
-                    temperature=0.0,
-                    condition_on_previous_text=False,
-                    initial_prompt="Ezra, British English, innit, mate, bruv, cheers, Arabic, مرحبا عزرا"
-                )
-                whisper_text = " ".join([s.text for s in segments]).strip()
-                if whisper_text and len(whisper_text) > 1:
-                    raw_transcription = whisper_text
             except Exception:
                 pass
 

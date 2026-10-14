@@ -923,7 +923,7 @@ class BrainEngine:
         if tool_speech:
             if not clean_text:
                 clean_text = tool_speech
-            elif any(tr.get("tool", "").startswith(prefix) for tr in tool_results for prefix in ["get_", "search_", "inspect_"]):
+            else:
                 clean_text = f"{clean_text} {tool_speech}".strip()
         elif not clean_text and tool_results:
             tools_done = [tr.get("tool", "directive") for tr in tool_results if "error" not in tr]
@@ -1940,15 +1940,21 @@ class BrainEngine:
                 "tool_calls": [{"tool": "take_screenshot", "result": res}]
             }
 
-        # 14. Top Tech News
-        if any(w in msg for w in ("tech news", "hacker news", "technology news", "اخبار التقنية", "أخبار التكنولوجيا")):
+        # 14. Top Tech & Developer News
+        dev_news_triggers = (
+            "dev news", "developer news", "tech news", "technology news", "hacker news",
+            "coding news", "software news", "programming news", "what about dev news",
+            "what about tech news", "the dev news", "give me dev news", "tell me dev news",
+            "اخبار التقنية", "أخبار التكنولوجيا", "أخبار المطورين", "اخبار المطورين", "أخبار البرمجة", "اخبار البرمجة"
+        )
+        if any(w in msg for w in dev_news_triggers) or (("news" in msg or "الأخبار" in msg or "أخبار" in msg) and any(kw in msg for kw in ("dev", "developer", "tech", "code", "coding", "software", "تقنية", "تكنولوجيا", "مطور"))):
             res = api_manager.get_tech_news(limit=3)
             articles = res.get("articles", [])
             if articles:
                 titles = ". ".join([a.get("title", "") for a in articles if a.get("title")])
-                speech = f"Top tech headlines: {titles}."
+                speech = f"Here are the top developer news stories, sir: {titles}."
             else:
-                speech = "Could not fetch top tech news at the moment, sir."
+                speech = "Could not fetch developer news at the moment, sir."
             return {
                 "speech_text": speech,
                 "tool_calls": [{"tool": "get_tech_news", "result": res}]
