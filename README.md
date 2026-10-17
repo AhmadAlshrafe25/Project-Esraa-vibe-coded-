@@ -1,7 +1,8 @@
-# Project Ezra
+# Project Ezra (v1.0 - Archived / Concluded)
 
-> **"All systems operational and ready, sir."**  
-> An autonomous, ultra-efficient, 100% free AI desktop companion.
+> [!NOTE]
+> **Version 1.0 Closed & Concluded**  
+> This version of Project Ezra is closed. Development is shifting to Ezra v2 in this repository.
 
 ---
 
